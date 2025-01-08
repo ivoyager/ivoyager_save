@@ -1,4 +1,4 @@
-# editor_plugin.gd
+# load_button.gd
 # This file is part of I, Voyager
 # https://ivoyager.dev
 # *****************************************************************************
@@ -17,27 +17,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # *****************************************************************************
-@tool
-extends EditorPlugin
+class_name IVLoadButton
+extends Button
 
 
-func _enter_tree() -> void:
-	print_plugin_name_and_version("ivoyager_save"," - https://ivoyager.dev")
 
-
-func _exit_tree() -> void:
-	print("Removing I, Voyager - Tree Saver (plugin)")
-
-
-# Copied from 'master' plugin utility functions at:
-# https://github.com/ivoyager/ivoyager_core/blob/master/editor_plugin/plugin_utils.gd
-static func print_plugin_name_and_version(plugin: String, append := "") -> void:
-	var path := "res://addons/" + plugin + "/plugin.cfg"
-	var plugin_cfg := ConfigFile.new()
-	var err := plugin_cfg.load(path)
-	if err != OK:
-		assert(false, "Failed to load config '%s'" % path)
-		return
-	var plugin_name: String = plugin_cfg.get_value("plugin", "name")
-	var version: String = plugin_cfg.get_value("plugin", "version")
-	print("%s (plugin) %s%s" % [plugin_name, version, append])
+func _pressed() -> void:
+	IVSave.load_file()
