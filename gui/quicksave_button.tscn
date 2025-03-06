@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://rppwkgmgwt24"]
+
+[ext_resource type="Script" path="res://addons/ivoyager_save/gui/quicksave_button.gd" id="1_fa2t8"]
+
+[node name="QuicksaveButton" type="Button"]
+tooltip_text = "HINT_QUICKSAVE"
+text = "BUTTON_QUICKSAVE"
+script = ExtResource("1_fa2t8")

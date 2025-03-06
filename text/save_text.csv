@@ -1,0 +1,9 @@
+id,en
+BUTTON_LOAD,Load
+BUTTON_QUICKLOAD,Quickload
+BUTTON_QUICKSAVE,Quicksave
+BUTTON_SAVE_AS,Save As
+HINT_LOAD,Load file using dialog.
+HINT_QUICKLOAD,"Load last modified file in current save directory or subdirectories. The file may be a quicksave, autosave or named save."
+HINT_QUICKSAVE,Save file with preset name.
+HINT_SAVE_AS,Save file using dialog.

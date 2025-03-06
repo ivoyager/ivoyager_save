@@ -71,11 +71,11 @@ var save_root: Node = null
 var directory_cache_path := "user://cache/saves_dir.ivbinary"
 var fallback_directory := "user://saves"
 var autosave_subdirectory := "autosaves"
-var autosave_name := "AutoSave_"
+var autosave_name := "Autosave"
 var autosave_number := 10
-var add_suffix_to_autosave := false ## If false, appends an integer suffix.
-var quicksave_name := "QuickSave"
-var add_suffix_to_quicksave := false ## If false, there will be only one file that is overwritten.
+var autosave_uses_suffix_generator := false ## if false, appends an integer up to autosave_number.
+var quicksave_name := "Quicksave"
+var quicksave_uses_suffix_generator := false ## If false, the single file will be overwritten.
 var file_extension := "GameSave"
 var file_description := "Game Save"
 
@@ -87,37 +87,26 @@ var name_generator := func() -> String:
 ## "_YYYY-MM-DD_HH.MM.SS".
 var suffix_generator := func() -> String:
 	return "_" + Time.get_datetime_string_from_system().replace("T", "_").replace(":", ".")
-## Allows uncompleted processes to finish. Use in conjuction with
-## [member save_checkpoint] to ensure that game state is stable before
-## persisted data is read for save.
-var save_frames_delay := 5
-## Allows uncompleted processes to finish. Use in conjuction with
-## [member load_checkpoint] to ensure that game state is stable before
-## deconstruction of the existing procedural tree begins.
-var load_deconstruction_frames_delay := 5
-## Delay occurs after exising procedural nodes have been freed but before
-## the loaded procedural tree is added. Can prevent hard-to-debug issues that
-## result from freeing nodes responding to signals before they are fully
-## destroyed. 
-var load_reconstruction_frames_delay := 5
-## Method must return true or false. If false, a save is not attempted.
+## Method must return true or false. If false, a save will not be initiated.
 var save_permission_test := func() -> bool: return true
-## Method must return true or false. If false, a load is not attempted.
+## Method must return true or false. If false, a load will not be initiated.
 var load_permission_test := func() -> bool: return true
-## Method (possibly a coroutine) awaited before save is started. Must return
-## true or false; if false, the save is aborted. Use in conjuction with
-## [member save_frames_delay] to ensure that game state is stable (threads
-## finished, etc.) before save starts.
+## Method, possibly a coroutine, awaited before save is started. Must return
+## true or false; if false, the save is aborted. Use to ensure that game
+## state is stable (threads finished, etc.) before save starts.
 var save_checkpoint := func() -> bool: return true
-## Method (possibly a coroutine) awaited before load is started. Must return
-## true or false; if false, the load is aborted. Use in conjuction with
-## [member load_deconstruction_frames_delay] to ensure that game state is
-## stable (threads finished, etc.) before load starts.
+## Method, possibly a coroutine, awaited before load is started. Must return
+## true or false; if false, the load is aborted. Use to ensure that game
+## state is stable (threads finished, etc.) before load starts.
 var load_checkpoint := func() -> bool: return true
+## Frame delay that occurs after exising procedural nodes have been freed but
+## before the loaded procedural tree is added. Can prevent hard-to-debug issues
+## that result from freeing nodes responding to signals before they are fully
+## destroyed.
+var load_build_delay := 5
 
 
 var _directory: String # globalized path
-var _autosave_integer := 1
 
 @onready var _tree_saver := IVTreeSaver.new()
 
@@ -144,21 +133,25 @@ func get_file_name(save_type := SaveType.NAMED_SAVE) -> String:
 			base_name = name_generator.call() + suffix_generator.call()
 		SaveType.QUICKSAVE:
 			base_name = quicksave_name
-			if add_suffix_to_quicksave:
+			if quicksave_uses_suffix_generator:
 				base_name += suffix_generator.call()
 		SaveType.AUTOSAVE:
 			base_name = autosave_name
-			if add_suffix_to_quicksave:
+			if autosave_uses_suffix_generator:
 				base_name += suffix_generator.call()
 			else:
-				base_name += str(_autosave_integer)
+				base_name += get_autosave_integer_append()
 	return base_name + "." + file_extension
 
 
 func get_file_path(save_type := SaveType.NAMED_SAVE) -> String:
-	if save_type != SaveType.AUTOSAVE:
-		return get_directory().path_join(get_file_name(save_type))
-	return get_directory().path_join(autosave_subdirectory).path_join(get_file_name(save_type))
+	if save_type == SaveType.AUTOSAVE:
+		return get_autosaves_subdirectory().path_join(get_file_name(save_type))
+	return get_directory().path_join(get_file_name(save_type))
+
+
+func get_autosaves_subdirectory() -> String:
+	return get_directory().path_join(autosave_subdirectory)
 
 
 func get_directory() -> String:
@@ -209,19 +202,21 @@ func save_file(save_type := SaveType.NAMED_SAVE, path := "") -> void:
 	is_saving = true
 	status_changed.emit(true, false)
 	var await_result: bool = await save_checkpoint.call()
+	await get_tree().process_frame # ensure we are on the main thread
 	if await_result == false:
 		is_saving = false
 		status_changed.emit(false, false)
 		return
 	print("Saving " + path)
 	save_started.emit()
-	for i in save_frames_delay:
-		await get_tree().process_frame
+	await get_tree().process_frame
 	var root := save_root if save_root else get_tree().get_current_scene()
 	if DEBUG_PRINT_NODES:
 		IVSaveUtils.print_debug_log(root, false)
 	var save_data: Array = _tree_saver.get_gamesave(root)
 	_store_data_to_file(save_data, path)
+	if save_type == SaveType.AUTOSAVE:
+		trim_autosaves_subdirectory()
 	save_finished.emit()
 	is_saving = false
 	status_changed.emit(false, false)
@@ -247,16 +242,15 @@ func load_file(load_last := false, path := "") -> void:
 		is_loading = false
 		status_changed.emit(false, false)
 		return
+	await get_tree().process_frame # ensure we are on the main thread
 	print("Loading " + path)
 	load_started.emit()
-	for i in load_deconstruction_frames_delay:
-		await get_tree().process_frame
 	about_to_free_procedural_tree_for_load.emit()
 	var root := save_root if save_root else get_tree().get_current_scene()
 	IVSaveUtils.free_procedural_objects_recursive(root)
-	var save_data := _get_data_from_file(path)
-	for i in load_reconstruction_frames_delay:
+	for i in load_build_delay:
 		await get_tree().process_frame
+	var save_data := _get_data_from_file(path)
 	about_to_build_procedural_tree_for_load.emit()
 	_tree_saver.build_attached_tree(save_data, root)
 	load_finished.emit()
@@ -268,7 +262,7 @@ func load_file(load_last := false, path := "") -> void:
 		IVSaveUtils.print_debug_log(root, true)
 	
 
-func has_file_for_load(path: String, search_subdirectories := true) -> bool:
+func has_file(path: String) -> bool:
 	var dir := DirAccess.open(path)
 	if !dir:
 		return false
@@ -278,8 +272,8 @@ func has_file_for_load(path: String, search_subdirectories := true) -> bool:
 		if !dir.current_is_dir():
 			if file_name.get_extension() == file_extension:
 				return true
-		elif search_subdirectories:
-			if has_file_for_load(path.path_join(file_name), true):
+		else:
+			if has_file(path.path_join(file_name)):
 				return true
 		file_name = dir.get_next()
 	return false
@@ -292,11 +286,63 @@ func close_dialogs() -> void:
 ## The search includes subdirectories.
 func get_last_modified_file_path(dir_path: String) -> String:
 	var path_time_result := ["", 0]
-	_get_last_modified_recursive(dir_path, path_time_result)
+	_get_last_modified(dir_path, path_time_result)
 	return path_time_result[0]
 
 
-func _get_last_modified_recursive(dir_path: String, path_time_result: Array) -> void:
+func get_autosave_integer_append() -> String:
+	# Only examines the last modified file to decide the next integer append.
+	var last_path_time := ["", 0]
+	_get_last_modified(get_autosaves_subdirectory(), last_path_time, false)
+	var last_modified: String = last_path_time[0]
+	if !last_modified:
+		return "-1"
+	var base_name := last_modified.get_file().get_basename()
+	var pos := base_name.rfind("-")
+	if pos == -1:
+		return "-1"
+	var integer := base_name.substr(pos + 1).to_int()
+	integer += 1
+	if integer > autosave_number:
+		integer = 1
+	return "-" + str(integer)
+
+
+func trim_autosaves_subdirectory() -> void:
+	var list := _get_path_modified_time_list(get_autosaves_subdirectory())
+	if list.size() <= autosave_number:
+		return
+	list.sort_custom(_sort_path_modified_time)
+	while list.size() > autosave_number:
+		var item: Array = list.pop_back()
+		var path: String = item[0]
+		DirAccess.remove_absolute(path)
+
+
+func _get_path_modified_time_list(dir_path: String) -> Array[Array]:
+	var list: Array[Array] = []
+	var dir := DirAccess.open(dir_path)
+	if !dir:
+		return list
+	dir.list_dir_begin()
+	var next_name := dir.get_next()
+	while next_name:
+		if !dir.current_is_dir():
+			if next_name.get_extension() == file_extension:
+				var file_path := dir_path.path_join(next_name)
+				var time := FileAccess.get_modified_time(file_path)
+				list.append([file_path, time])
+		next_name = dir.get_next()
+	return list
+
+
+func _sort_path_modified_time(a: Array, b: Array) -> bool:
+	# more recent first
+	return a[1] > b[1]
+
+
+func _get_last_modified(dir_path: String, path_time_result: Array, search_subdirectories := true
+		) -> void:
 	# Searches subdirectories recursively
 	var dir := DirAccess.open(dir_path)
 	if !dir:
@@ -311,12 +357,15 @@ func _get_last_modified_recursive(dir_path: String, path_time_result: Array) -> 
 				if time > path_time_result[1]:
 					path_time_result[0] = file_path
 					path_time_result[1] = time
-		else:
-			_get_last_modified_recursive(dir_path.path_join(next_name), path_time_result)
+		elif search_subdirectories:
+			_get_last_modified(dir_path.path_join(next_name), path_time_result)
 		next_name = dir.get_next()
 
 
 func _store_data_to_file(save_data: Array, path: String) -> bool:
+	# We create the directory in case it doesn't exist (e.g., no autosaves yet).
+	var path_directory := path.get_base_dir()
+	DirAccess.make_dir_recursive_absolute(path_directory)
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	var err := FileAccess.get_open_error()
 	if err != OK:
