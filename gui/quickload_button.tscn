@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://cfmljqrp3tuvp"]
+
+[ext_resource type="Script" path="res://addons/ivoyager_save/gui/quickload_button.gd" id="1_1cxwj"]
+
+[node name="QuickloadButton" type="Button"]
+tooltip_text = "HINT_QUICKLOAD"
+text = "BUTTON_QUICKLOAD"
+script = ExtResource("1_1cxwj")

@@ -2,7 +2,7 @@
 # This file is part of I, Voyager
 # https://ivoyager.dev
 # *****************************************************************************
-# Copyright 2017-2024 Charlie Whitfield
+# Copyright 2017-2025 Charlie Whitfield
 # I, Voyager is a registered trademark of Charlie Whitfield in the US
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -227,6 +227,17 @@ static func get_script_or_packedscene(path: String) -> Resource:
 	assert(script, "Failed to load Script at '%s'" % path)
 	return script
 
+
+## Call before save and after load for a debug log. Delay the post-load call if
+## the loaded objects build additional tree items.
+static func print_debug_log(save_root: Node, compare_class_count: bool,
+		log_persist_nodes := true, log_all_nodes := false,
+		print_stray_nodes := false, print_tree := false) -> void:
+	var result := get_tree_debug_log(save_root, compare_class_count,
+		log_persist_nodes, log_all_nodes,
+		print_stray_nodes, print_tree)
+	for i in result.size():
+		print(result[i])
 
 
 # logging

@@ -2,7 +2,7 @@
 # This file is part of I, Voyager
 # https://ivoyager.dev
 # *****************************************************************************
-# Copyright 2017-2024 Charlie Whitfield
+# Copyright 2017-2025 Charlie Whitfield
 # I, Voyager is a registered trademark of Charlie Whitfield in the US
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,7 @@ extends RefCounted
 ## properties specified in object constants in a scene tree. 2) Set properties
 ## and rebuild procedural parts of the scene tree on game load.
 ##
-## IVTreeSaver can persist Godot built-in types (including [Array] and
+## This system can persist Godot built-in types (including [Array] and
 ## [Dictionary]) and four kinds of 'persist' objects:[br][br]
 ##    
 ##    1. 'Non-procedural' [Node] - May have persist data but won't be freed on

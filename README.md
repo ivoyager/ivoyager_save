@@ -1,6 +1,15 @@
 # I, Voyager - Save (plugin)
 
-**WIP - This plugin will replace "ivoyager_tree_saver". The current README is duplicated from that plugin and needs update in parts.**
+
+***********
+
+**WIP**
+
+**This plugin will replace "ivoyager_tree_saver". The current README is duplicated from that plugin and needs update.**
+
+**The goal is to move all "save/load" API and GUI from ivoyager_core to this plugin. Release v0.0.1 will be fully decoupled from ivoyager_core (that isn't presently the case).**
+
+***********
 
 Provides functions to:
 1. Generate a compact game-save data structure from properties specified in object constants in a scene tree.
