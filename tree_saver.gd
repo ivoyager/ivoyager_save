@@ -24,7 +24,7 @@ extends RefCounted
 ## properties specified in object constants in a scene tree. 2) Set properties
 ## and rebuild procedural parts of the scene tree on game load.
 ##
-## IVTreeSaver can persist Godot built-in types (including [Array] and
+## This system can persist Godot built-in types (including [Array] and
 ## [Dictionary]) and four kinds of 'persist' objects:[br][br]
 ##    
 ##    1. 'Non-procedural' [Node] - May have persist data but won't be freed on

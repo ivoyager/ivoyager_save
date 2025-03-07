@@ -21,7 +21,21 @@ extends Node
 
 ## Singleton that provides API for saving and loading.
 ##
-## This node is added as singleton "IVSave".[br][br]
+## This node is added as singleton "IVSave". It provides methods for save via
+## file dialog, quicksave, autosave, load via file dialog, and quickload.[br][br]
+##
+## Callable properties should be set to ensure that save/load is allowed and
+## safe to procede. Game state must be stable before save or load initiates
+## (e.g., threads finished, etc.).[br][br]
+##
+## By default, this node handles four action events that must exist in the
+## parent project: &"save_as", &"load_file", &"quicksave" and &"quickload".
+## Alternatively, you can handle your own action events elsewhere and call
+## methods here. To disable input handling in this node, use code
+## [code]IVSave.set_process_shortcut_input(false)[/code].[br][br]
+##
+## See [IVTreeSaver] for detailed comments on how to specify "persist"
+## properites and objects in your project.
 
 signal save_started()
 signal save_finished()
@@ -29,12 +43,9 @@ signal load_started()
 signal about_to_free_procedural_tree_for_load()
 signal about_to_build_procedural_tree_for_load()
 signal load_finished()
-
 signal status_changed(is_saving: bool, is_loading: bool)
-
 signal dialog_opened(control: Control) # emitted by the dialog
 signal dialog_closed(control: Control) # emitted by the dialog
-
 signal save_dialog_requested()
 signal load_dialog_requested()
 signal close_dialogs_requested()
@@ -46,21 +57,22 @@ enum SaveType {
 	AUTOSAVE,
 }
 
-## Prints procedural node accounting at save and after load. 
+## Prints procedural nodes at save and after load. 
 const DEBUG_PRINT_NODES := false
-## Frames delay after load (in case procedural nodes build additional nodes).
+## Frames delay after load before node print (in case procedural nodes build
+## additional nodes).
 const DEBUG_PRINT_NODES_DELAY := 60
 
 var is_saving: bool
 var is_loading: bool
 
-## TODO: Replace save_root
-## Root node(s) for save and load. If empty, class methods use the current scene
-## root obtained by [code]get_tree().get_current_scene()[/code].
-## Root nodes must have
-## [code]const PERSIST_MODE := IVSaveUtils.PersistMode.PERSIST_PROPERTIES_ONLY[/code].
-## Descendant nodes may have value [code]PERSIST_PROCEDURAL[/code] (see comments in IVTreeSaver).
-var save_roots: Array[NodePath] = []
+# TODO: Replace save_root
+# Root node(s) for save and load. If empty, class methods use the current scene
+# root obtained by [code]get_tree().get_current_scene()[/code].
+# Root nodes must have
+# [code]const PERSIST_MODE := IVSaveUtils.PersistMode.PERSIST_PROPERTIES_ONLY[/code].
+# Descendant nodes may have value [code]PERSIST_PROCEDURAL[/code] (see comments in IVTreeSaver).
+#var save_roots: Array[NodePath] = []
 
 
 ## TODO: Replace w/ save_roots
@@ -124,6 +136,22 @@ func _ready() -> void:
 	if !_directory:
 		_directory = ProjectSettings.globalize_path(fallback_directory)
 		DirAccess.make_dir_recursive_absolute(_directory)
+
+
+func _shortcut_input(event: InputEvent) -> void:
+	if !event.is_action_type() or !event.is_pressed():
+		return
+	if event.is_action_pressed(&"quicksave"):
+		quicksave()
+	elif event.is_action_pressed(&"save_as"):
+		save_file()
+	elif event.is_action_pressed(&"quickload"):
+		quickload()
+	elif event.is_action_pressed(&"load_file"):
+		load_file()
+	else:
+		return
+	get_viewport().set_input_as_handled()
 
 
 func get_file_name(save_type := SaveType.NAMED_SAVE) -> String:
