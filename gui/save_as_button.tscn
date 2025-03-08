@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://dit7yqgigdo3k"]
 
-[ext_resource type="Script" path="res://addons/ivoyager_save/gui/save_as_button.gd" id="1_pb8lj"]
+[ext_resource type="Script" uid="uid://cwcnt51potvtj" path="res://addons/ivoyager_save/gui/save_as_button.gd" id="1_pb8lj"]
 
 [node name="SaveAsButton" type="Button"]
 tooltip_text = "HINT_SAVE_AS"
