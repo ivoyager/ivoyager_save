@@ -102,7 +102,7 @@ extends RefCounted
 
 const DPRINT := false # set true for debug print
 
-const OBJECT_ID_OFFSET := 10_000_000_000_000 # allows this many different persist values
+const OBJECT_ID_OFFSET := 10_000_000_000_000 # limits number of unique ints & StringNames
 const WEAKREF_ID_OFFSET := 2 * OBJECT_ID_OFFSET
 const WEAKREF_NULL_ID := 3 * OBJECT_ID_OFFSET
 
@@ -115,21 +115,22 @@ const PERSIST_PROCEDURAL := PersistMode.PERSIST_PROCEDURAL
 # localized
 var _persist_property_lists := IVSaveUtils.persist_property_lists
 
-# gamesave contents
+# gamesave file contents
+
+
 # Note: FileAccess.store_var() & get_var() doesn't save or recover array type
 # as of Godot 4.2.dev5. We can't type these arrays yet!
 var _gamesave_n_objects := 0
-var _gamesave_serialized_nodes := []
-var _gamesave_serialized_refs := []
-var _gamesave_script_paths := []
-var _gamesave_indexed_values := []
+var _gamesave_serialized_nodes: Array[Array] = []
+var _gamesave_serialized_refs: Array[Array] = []
+var _gamesave_script_paths: Array[String] = []
+var _gamesave_indexed_values: Array[Variant] = [] # ints & StringNames
 
 # save processing
 var _nonprocedural_path_root: Node
 var _object_ids: Dictionary[Object, int] = {} # indexed by objects
 var _script_ids: Dictionary[String, int] = {} # indexed by script paths
-var _indexed_string_ids: Dictionary[String, int] = {} # indexed by Strings
-var _indexed_nonstring_ids: Dictionary[Variant, int] = {} # indexed by non-Strings (incl StringName)
+var _indexed_value_ids: Dictionary[Variant, int] = {} # indexed by int or StringName
 
 # load processing
 var _is_detached: bool
@@ -231,8 +232,7 @@ func _reset() -> void:
 	_nonprocedural_path_root = null
 	_object_ids.clear()
 	_script_ids.clear()
-	_indexed_string_ids.clear()
-	_indexed_nonstring_ids.clear()
+	_indexed_value_ids.clear()
 	_objects.clear()
 	_scripts.clear()
 
@@ -270,7 +270,7 @@ func _locate_or_instantiate_objects(save_root: Node) -> void:
 	# 'save_root' can be null if all nodes are procedural.
 	assert(!DPRINT or _dprint("* Registering(/Instancing) Objects for Load *"))
 	_objects.resize(_gamesave_n_objects)
-	for serialized_node: Array in _gamesave_serialized_nodes:
+	for serialized_node in _gamesave_serialized_nodes:
 		var object_id: int = serialized_node[0]
 		var script_id: int = serialized_node[1]
 		# Assert user called the right build function
@@ -289,7 +289,7 @@ func _locate_or_instantiate_objects(save_root: Node) -> void:
 			assert(!DPRINT or _dprint(object_id, node, script_id, _gamesave_script_paths[script_id]))
 		assert(node)
 		_objects[object_id] = node
-	for serialized_ref: Array in _gamesave_serialized_refs:
+	for serialized_ref in _gamesave_serialized_refs:
 		var object_id: int = serialized_ref[0]
 		var script_id: int = serialized_ref[1]
 		var script: Script = _scripts[script_id]
@@ -302,14 +302,14 @@ func _locate_or_instantiate_objects(save_root: Node) -> void:
 
 func _deserialize_all_object_data() -> void:
 	assert(!DPRINT or _dprint("* Deserializing Objects for Load *"))
-	for serialized_node: Array in _gamesave_serialized_nodes:
+	for serialized_node in _gamesave_serialized_nodes:
 		_deserialize_object_data(serialized_node, true)
-	for serialized_ref: Array in _gamesave_serialized_refs:
+	for serialized_ref in _gamesave_serialized_refs:
 		_deserialize_object_data(serialized_ref, false)
 
 
 func _build_procedural_tree() -> void:
-	for serialized_node: Array in _gamesave_serialized_nodes:
+	for serialized_node in _gamesave_serialized_nodes:
 		var object_id: int = serialized_node[0]
 		if object_id == 0: # 'save_root' has no parent in the save
 			continue
@@ -424,8 +424,8 @@ func _deserialize_object_data(serialized_object: Array, is_node: bool) -> void:
 
 
 func _get_encoded_value(value: Variant) -> Variant:
-	# Returns Array, Dictionary, int (object_id or index), or non-string
-	# built-in type.
+	# Returns an Array, Dictionary, int (always an index), or non-StringName
+	# built-in type. Never StringName!
 	var type := typeof(value)
 	if type == TYPE_ARRAY:
 		var array: Array = value
@@ -437,30 +437,26 @@ func _get_encoded_value(value: Variant) -> Variant:
 		var object: Object = value
 		return _get_encoded_object(object) # int >= OBJECT_ID_OFFSET
 	
-	# Index string types to avoid duplicated strings (e.g., many dict keys).
-	# String/StringName are interchangeable as dictionary keys, so we index
-	# Strings in their own dictionary. We have to index int for the decode.
+	# We index all values of type int and StringName for several reasons:
+	# An int value has to be indexed because an encoded int is always and index.
+	# StringName must be indexed due to type encoding in _get_encoded_dict().
+	# Indexing StringName may also reduce size somewhat, as these are commonly
+	# dictionary keys that may be frequently duplicated (although "safe"
+	# dictionary types will be stored in whole without key indexing).
 	if type == TYPE_INT or type == TYPE_STRING_NAME:
-		var index: int = _indexed_nonstring_ids.get(value, -1)
+		var index: int = _indexed_value_ids.get(value, -1)
 		if index == -1:
 			index = _gamesave_indexed_values.size()
 			_gamesave_indexed_values.append(value)
-			_indexed_nonstring_ids[value] = index
-		return index
-	if type == TYPE_STRING:
-		var index: int = _indexed_string_ids.get(value, -1)
-		if index == -1:
-			index = _gamesave_indexed_values.size()
-			_gamesave_indexed_values.append(value)
-			_indexed_string_ids[value] = index
+			_indexed_value_ids[value] = index
 		return index
 	
-	# All other built-ins saved as-is
+	# All other built-ins encoded as-is
 	return value
 
 
 func _get_decoded_value(encoded_value: Variant) -> Variant:
-	# Decode int, Array or Dictionary; otherwise return as is.
+	# Decode int, Array or Dictionary. Other types return as is.
 	var encoded_type := typeof(encoded_value)
 	if encoded_type == TYPE_INT: # object or indexed value
 		var index: int = encoded_value
@@ -484,9 +480,10 @@ func _get_encoded_array(array: Array) -> Array:
 	# Untyped and object-typed arrays are both encoded as untyped arrays. We
 	# append info to allow decoding.
 	
+	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
+	
 	var array_type := array.get_typed_builtin()
-	if (array_type != TYPE_NIL and array_type != TYPE_ARRAY and array_type != TYPE_DICTIONARY
-			and array_type != TYPE_OBJECT):
+	if !UNSAFE_TYPES.has(array_type):
 		return array.duplicate() # duplicates array type!
 	
 	var size := array.size()
@@ -544,9 +541,8 @@ func _get_decoded_array(encoded_array: Array) -> Array:
 
 
 func _get_encoded_dict(dict: Dictionary) -> Dictionary:
-	
+	 
 	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
-	const DICT_TYPING_KEY := &"_!%IVSAVE"
 	
 	var key_type := dict.get_typed_key_builtin()
 	var value_type := dict.get_typed_value_builtin()
@@ -554,7 +550,7 @@ func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 		return dict.duplicate() # duplicates dict type!
 	
 	# All others will be encoded as a fully untyped dict with typing stored at
-	# DICT_TYPING_KEY.
+	# key &"" (any StringName key is safe due to key encoding).
 	
 	var key_class_name := &""
 	var key_script: Script
@@ -572,7 +568,9 @@ func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 		value_script = dict.get_typed_value_script()
 		value_script_id = _get_script_id(value_script)
 	
-	var encoded_dict := {DICT_TYPING_KEY : [key_type, key_class_name, key_script_id,
+	# Note: it's ok if &"" exists as key in project dictionaries because
+	# _get_encoded_value(key) will never return a StringName.
+	var encoded_dict := {&"" : [key_type, key_class_name, key_script_id,
 			value_type, value_class_name, value_script_id]}
 	
 	for key: Variant in dict:
@@ -584,12 +582,10 @@ func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 
 func _get_decoded_dict(encoded_dict: Dictionary) -> Dictionary:
 	
-	const DICT_TYPING_KEY := &"_!%IVSAVE"
-	
-	if encoded_dict.is_typed(): # only safe types
+	if encoded_dict.is_typed(): # only "safe" types!
 		return encoded_dict.duplicate()
 	
-	var dict_typing: Array = encoded_dict[DICT_TYPING_KEY]
+	var dict_typing: Array = encoded_dict[&""]
 	var key_type: int = dict_typing[0]
 	var key_class_name: StringName = dict_typing[1]
 	var key_script_id: int = dict_typing[2]
@@ -603,7 +599,7 @@ func _get_decoded_dict(encoded_dict: Dictionary) -> Dictionary:
 			value_type, value_class_name, value_script)
 	
 	for encoded_key: Variant in encoded_dict:
-		if is_same(encoded_key, DICT_TYPING_KEY):
+		if typeof(encoded_key) == TYPE_STRING_NAME: # this is the typing key &""
 			continue
 		var key: Variant = _get_decoded_value(encoded_key)
 		dict[key] = _get_decoded_value(encoded_dict[encoded_key])
