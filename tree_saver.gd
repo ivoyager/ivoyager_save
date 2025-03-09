@@ -126,10 +126,10 @@ var _gamesave_indexed_values := []
 
 # save processing
 var _nonprocedural_path_root: Node
-var _object_ids := {} # indexed by objects
-var _script_ids := {} # indexed by script paths
-var _indexed_string_ids := {} # indexed by String values
-var _indexed_nonstring_ids := {} # indexed by non-String values (incl StringName)
+var _object_ids: Dictionary[Object, int] = {} # indexed by objects
+var _script_ids: Dictionary[String, int] = {} # indexed by script paths
+var _indexed_string_ids: Dictionary[String, int] = {} # indexed by Strings
+var _indexed_nonstring_ids: Dictionary[Variant, int] = {} # indexed by non-Strings (incl StringName)
 
 # load processing
 var _is_detached: bool
@@ -455,7 +455,7 @@ func _get_encoded_value(value: Variant) -> Variant:
 			_indexed_string_ids[value] = index
 		return index
 	
-	# Built-in saved as-is
+	# All other built-ins saved as-is
 	return value
 
 
@@ -544,19 +544,70 @@ func _get_decoded_array(encoded_array: Array) -> Array:
 
 
 func _get_encoded_dict(dict: Dictionary) -> Dictionary:
-	# TODO Godot 4.4: Dictionary typing!
-	var encoded_dict := {}
+	
+	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
+	const DICT_TYPING_KEY := &"_!%IVSAVE"
+	
+	var key_type := dict.get_typed_key_builtin()
+	var value_type := dict.get_typed_value_builtin()
+	if !UNSAFE_TYPES.has(key_type) and !UNSAFE_TYPES.has(value_type):
+		return dict.duplicate() # duplicates dict type!
+	
+	# All others will be encoded as a fully untyped dict with typing stored at
+	# DICT_TYPING_KEY.
+	
+	var key_class_name := &""
+	var key_script: Script
+	var key_script_id := -1
+	if key_type == TYPE_OBJECT:
+		key_class_name = dict.get_typed_key_class_name()
+		key_script = dict.get_typed_key_script()
+		key_script_id = _get_script_id(key_script)
+	
+	var value_class_name := &""
+	var value_script: Script
+	var value_script_id := -1
+	if value_type == TYPE_OBJECT:
+		value_class_name = dict.get_typed_value_class_name()
+		value_script = dict.get_typed_value_script()
+		value_script_id = _get_script_id(value_script)
+	
+	var encoded_dict := {DICT_TYPING_KEY : [key_type, key_class_name, key_script_id,
+			value_type, value_class_name, value_script_id]}
+	
 	for key: Variant in dict:
 		var encoded_key: Variant = _get_encoded_value(key)
 		encoded_dict[encoded_key] = _get_encoded_value(dict[key])
+	
 	return encoded_dict
 
 
 func _get_decoded_dict(encoded_dict: Dictionary) -> Dictionary:
-	var dict := {}
+	
+	const DICT_TYPING_KEY := &"_!%IVSAVE"
+	
+	if encoded_dict.is_typed(): # only safe types
+		return encoded_dict.duplicate()
+	
+	var dict_typing: Array = encoded_dict[DICT_TYPING_KEY]
+	var key_type: int = dict_typing[0]
+	var key_class_name: StringName = dict_typing[1]
+	var key_script_id: int = dict_typing[2]
+	var key_script := _scripts[key_script_id] if key_script_id != -1 else null
+	var value_type: int = dict_typing[3]
+	var value_class_name: StringName = dict_typing[4]
+	var value_script_id: int = dict_typing[5]
+	var value_script := _scripts[value_script_id] if value_script_id != -1 else null
+	
+	var dict := Dictionary({}, key_type, key_class_name, key_script,
+			value_type, value_class_name, value_script)
+	
 	for encoded_key: Variant in encoded_dict:
+		if is_same(encoded_key, DICT_TYPING_KEY):
+			continue
 		var key: Variant = _get_decoded_value(encoded_key)
 		dict[key] = _get_decoded_value(encoded_dict[encoded_key])
+	
 	return dict
 
 
