@@ -102,10 +102,6 @@ extends RefCounted
 
 const DPRINT := false # set true for debug print
 
-const OBJECT_ID_OFFSET := 10_000_000_000_000 # limits number of unique ints & StringNames
-const WEAKREF_ID_OFFSET := 2 * OBJECT_ID_OFFSET
-const WEAKREF_NULL_ID := 3 * OBJECT_ID_OFFSET
-
 const PersistMode := IVSaveUtils.PersistMode
 const NO_PERSIST := PersistMode.NO_PERSIST
 const PERSIST_PROPERTIES_ONLY := PersistMode.PERSIST_PROPERTIES_ONLY
@@ -116,21 +112,15 @@ const PERSIST_PROCEDURAL := PersistMode.PERSIST_PROCEDURAL
 var _persist_property_lists := IVSaveUtils.persist_property_lists
 
 # gamesave file contents
-
-
-# Note: FileAccess.store_var() & get_var() doesn't save or recover array type
-# as of Godot 4.2.dev5. We can't type these arrays yet!
 var _gamesave_n_objects := 0
 var _gamesave_serialized_nodes: Array[Array] = []
 var _gamesave_serialized_refs: Array[Array] = []
 var _gamesave_script_paths: Array[String] = []
-var _gamesave_indexed_values: Array[Variant] = [] # ints & StringNames
 
 # save processing
 var _nonprocedural_path_root: Node
 var _object_ids: Dictionary[Object, int] = {} # indexed by objects
 var _script_ids: Dictionary[String, int] = {} # indexed by script paths
-var _indexed_value_ids: Dictionary[Variant, int] = {} # indexed by int or StringName
 
 # load processing
 var _is_detached: bool
@@ -155,7 +145,6 @@ func get_gamesave(save_root: Node) -> Array:
 		_gamesave_serialized_nodes,
 		_gamesave_serialized_refs,
 		_gamesave_script_paths,
-		_gamesave_indexed_values,
 		]
 	print("Persist objects saved: ", _gamesave_n_objects, "; nodes in tree: ",
 			save_root.get_tree().get_node_count())
@@ -210,7 +199,6 @@ func _build_tree(gamesave: Array, save_root: Node = null) -> Node:
 	_gamesave_serialized_nodes = gamesave[1]
 	_gamesave_serialized_refs = gamesave[2]
 	_gamesave_script_paths = gamesave[3]
-	_gamesave_indexed_values = gamesave[4]
 	_load_scripts()
 	_locate_or_instantiate_objects(save_root) # null ok if all procedural
 	_deserialize_all_object_data()
@@ -228,11 +216,9 @@ func _reset() -> void:
 	_gamesave_serialized_nodes = []
 	_gamesave_serialized_refs = []
 	_gamesave_script_paths = []
-	_gamesave_indexed_values = []
 	_nonprocedural_path_root = null
 	_object_ids.clear()
 	_script_ids.clear()
-	_indexed_value_ids.clear()
 	_objects.clear()
 	_scripts.clear()
 
@@ -424,45 +410,43 @@ func _deserialize_object_data(serialized_object: Array, is_node: bool) -> void:
 
 
 func _get_encoded_value(value: Variant) -> Variant:
-	# Returns an Array, Dictionary, int (always an index), or non-StringName
-	# built-in type. Never StringName!
+	# Returns any type other than Object or prohibited types. Encoded String
+	# type is overloaded to represent either a String or an Object, where
+	# the 1st character is an identifier:
+	#
+	# "'" - Everything after ' is an encoded string (encoded here).
+	# "*" - Object. Digits after * encode an object id. See _get_encoded_object().
+	# "!" - WeakRef to an object. Digits after ! encode an object id. See _get_encoded_object().
+	#
+	# Note: "" is a reserved key used for dictionary type encoding that can't
+	# collide with anything above.
+	const PROHIBITED_TYPES: Array[int] = [TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]
+	
 	var type := typeof(value)
+	if type == TYPE_STRING:
+		return "'" + value
+	if type == TYPE_OBJECT:
+		var object: Object = value
+		return _get_encoded_object(object) # always a String begining with "*" or "!"
 	if type == TYPE_ARRAY:
 		var array: Array = value
 		return _get_encoded_array(array) # array
 	if type == TYPE_DICTIONARY:
 		var dict: Dictionary = value
 		return _get_encoded_dict(dict) # dict
-	if type == TYPE_OBJECT:
-		var object: Object = value
-		return _get_encoded_object(object) # int >= OBJECT_ID_OFFSET
-	
-	# We index all values of type int and StringName for several reasons:
-	# An int value has to be indexed because an encoded int is always and index.
-	# StringName must be indexed due to type encoding in _get_encoded_dict().
-	# Indexing StringName may also reduce size somewhat, as these are commonly
-	# dictionary keys that may be frequently duplicated (although "safe"
-	# dictionary types will be stored in whole without key indexing).
-	if type == TYPE_INT or type == TYPE_STRING_NAME:
-		var index: int = _indexed_value_ids.get(value, -1)
-		if index == -1:
-			index = _gamesave_indexed_values.size()
-			_gamesave_indexed_values.append(value)
-			_indexed_value_ids[value] = index
-		return index
-	
-	# All other built-ins encoded as-is
-	return value
+	assert(!PROHIBITED_TYPES.has(type), "Attempted to persist prohibited type %s" % type)
+	return value # all other built-in types encoded as is
 
 
 func _get_decoded_value(encoded_value: Variant) -> Variant:
-	# Decode int, Array or Dictionary. Other types return as is.
+	# Inverse encoding above.
 	var encoded_type := typeof(encoded_value)
-	if encoded_type == TYPE_INT: # object or indexed value
-		var index: int = encoded_value
-		if index >= OBJECT_ID_OFFSET:
-			return _get_decoded_object(index)
-		return _gamesave_indexed_values[index]
+	if encoded_type == TYPE_STRING: # encoded String or Object
+		var encoded_string: String = encoded_value
+		if encoded_string[0] == "'":
+			return encoded_string.substr(1)
+		else:
+			return _get_decoded_object(encoded_string)
 	if encoded_type == TYPE_ARRAY:
 		var encoded_array: Array = encoded_value
 		return _get_decoded_array(encoded_array)
@@ -543,6 +527,7 @@ func _get_decoded_array(encoded_array: Array) -> Array:
 func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 	 
 	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
+	const TYPE_KEY := "" # not a possible return of _get_encoded_value()
 	
 	var key_type := dict.get_typed_key_builtin()
 	var value_type := dict.get_typed_value_builtin()
@@ -568,9 +553,9 @@ func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 		value_script = dict.get_typed_value_script()
 		value_script_id = _get_script_id(value_script)
 	
-	# Note: it's ok if &"" exists as key in project dictionaries because
-	# _get_encoded_value(key) will never return a StringName.
-	var encoded_dict := {&"" : [key_type, key_class_name, key_script_id,
+	# Note: it's ok if TYPE_KEY exists as key in project dictionaries because
+	# _get_encoded_value(key) will never return that value.
+	var encoded_dict := {TYPE_KEY : [key_type, key_class_name, key_script_id,
 			value_type, value_class_name, value_script_id]}
 	
 	for key: Variant in dict:
@@ -582,10 +567,12 @@ func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 
 func _get_decoded_dict(encoded_dict: Dictionary) -> Dictionary:
 	
+	const TYPE_KEY := "" # same as _get_encoded_dict()
+	
 	if encoded_dict.is_typed(): # only "safe" types!
 		return encoded_dict.duplicate()
 	
-	var dict_typing: Array = encoded_dict[&""]
+	var dict_typing: Array = encoded_dict[TYPE_KEY]
 	var key_type: int = dict_typing[0]
 	var key_class_name: StringName = dict_typing[1]
 	var key_script_id: int = dict_typing[2]
@@ -599,7 +586,7 @@ func _get_decoded_dict(encoded_dict: Dictionary) -> Dictionary:
 			value_type, value_class_name, value_script)
 	
 	for encoded_key: Variant in encoded_dict:
-		if typeof(encoded_key) == TYPE_STRING_NAME: # this is the typing key &""
+		if is_same(encoded_key, TYPE_KEY):
 			continue
 		var key: Variant = _get_decoded_value(encoded_key)
 		dict[key] = _get_decoded_value(encoded_dict[encoded_key])
@@ -607,32 +594,34 @@ func _get_decoded_dict(encoded_dict: Dictionary) -> Dictionary:
 	return dict
 
 
-func _get_encoded_object(object: Object) -> int:
+func _get_encoded_object(object: Object) -> String:
 	var is_weak_ref := false
 	if object is WeakRef:
 		var wr: WeakRef = object
 		object = wr.get_ref()
 		if object == null:
-			return WEAKREF_NULL_ID # WeakRef to a dead object
+			return "!" # WeakRef to a dead object
 		is_weak_ref = true
 	assert(_debug_assert_persist_object(object))
 	var object_id: int = _object_ids.get(object, -1)
 	if object_id == -1:
+		# We should have indexed all Nodes once in initial tree indexing!
 		assert(object is RefCounted, "Possible reference to Node that is not in the tree")
 		var ref: RefCounted = object
 		object_id = _index_and_serialize_ref(ref)
 	if is_weak_ref:
-		return object_id + WEAKREF_ID_OFFSET # WeakRef
-	return object_id + OBJECT_ID_OFFSET # Object
+		return "!" + str(object_id) # WeakRef
+	return "*" + str(object_id) # Object
 
 
-func _get_decoded_object(encoded_object: int) -> Object:
-	if encoded_object < WEAKREF_ID_OFFSET:
-		return _objects[encoded_object - OBJECT_ID_OFFSET]
-	if encoded_object < WEAKREF_NULL_ID:
-		var object: Object = _objects[encoded_object - WEAKREF_ID_OFFSET]
-		return weakref(object)
-	return WeakRef.new() # weak ref to dead object
+func _get_decoded_object(encoded_object: String) -> Object:
+	# Inverse encoding above.
+	if encoded_object[0] == "*":
+		return _objects[int(encoded_object.to_int())] # ignores "*"
+	if encoded_object == "!":
+		return WeakRef.new() # weak ref to dead object
+	assert(encoded_object[0] == "!")
+	return weakref(_objects[int(encoded_object.to_int())]) # ignores "!"
 
 
 func _is_persist_object(object: Object) -> bool:
