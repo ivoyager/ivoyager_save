@@ -62,27 +62,20 @@ extends RefCounted
 ##
 ## Special rules for 'persist' objects:[br][br]
 ##
-##    1. Objects cannot be deeply nested in containers. They can only be
-##       elements of directly persisted arrays (i.e., the array is listed) or
-##       keys or values of directly persisted dictionaries (i.e., the dictionary
-##       is listed).[br]
-##    2. Arrays containing persist objects must be typed as [code]TYPE_OBJECT[/code].[br]
-##    3. For procedural tree deconstruction, [method free_procedural_objects_recursive]
-##       nulls all references to objects for properties that are listed. Any other
-##       references to these objects must be nulled by some other code
-##       (otherwise, old procedural RefCounted objects won't be freed).
-##       Objects can be referenced in multiple places and circular references
-##       are ok.[br]
-##    4. Nodes must be in the tree.[br]
-##    5. All ancester nodes up to and including [code]save_root[/code] must also be persist
+##    1. Nodes must be in the tree.[br]
+##    2. All ancester nodes up to and including [code]save_root[/code] must also be persist
 ##       nodes.[br]
-##    6. Non-procedural Nodes (i.e., that are [code]PERSIST_PROPERTIES_ONLY[/code]) cannot
+##    3. Non-procedural Nodes (i.e., that are [code]PERSIST_PROPERTIES_ONLY[/code]) cannot
 ##       have any ancestors that are [code]PERSIST_PROCEDURAL[/code].[br]
-##    7. Non-procedural Nodes must have stable node paths.[br]
-##    8. Inner classes can't be persist objects.[br]
-##    9. A persisted RefCounted can only be [code]PERSIST_PROCEDURAL[/code].[br]
-##    10. Persist objects cannot have required args in their [code]_init()[/code]
-##       method.[br][br]
+##    4. Non-procedural Nodes must have stable node paths.[br]
+##    5. Inner classes can't be persist objects.[br]
+##    6. A persisted RefCounted can only be [code]PERSIST_PROCEDURAL[/code].[br]
+##    7. Persist objects cannot have required args in their [code]_init()[/code]
+##       method.[br]
+##    8. Objects CAN be referenced in multiple places. Even circular references are ok. However,
+##       code here can only null object properties listed in "persist" constant arrays during tree
+##       deconstruction. Any other references to these objects must be nulled by some other code.
+##       [br][br]
 ##
 ## Warnings:[br][br]
 ##
@@ -101,6 +94,8 @@ extends RefCounted
 ## the game save must exist in the updated class in the exact same order.
 
 const DPRINT := false # set true for debug print
+
+const PROHIBITED_TYPES: Array[int] = [TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]
 
 const PersistMode := IVSaveUtils.PersistMode
 const NO_PERSIST := PersistMode.NO_PERSIST
@@ -134,7 +129,6 @@ var _objects: Array[Object] = [] # indexed by object_id
 ## be a persist node. It may or may not be procedural (this will determine
 ## which 'build...' method to call later).
 func get_gamesave(save_root: Node) -> Array:
-	assert(_debug_assert_persist_object(save_root))
 	_nonprocedural_path_root = save_root
 	assert(!DPRINT or _dprint("* Registering tree for gamesave *"))
 	_index_tree(save_root)
@@ -178,7 +172,6 @@ func free_procedural_objects_recursive(root_node: Node) -> void:
 ## non-procedural node (using the same [param save_root] supplied in that method).
 func build_attached_tree(gamesave: Array, save_root: Node) -> void:
 	assert(save_root)
-	assert(_debug_assert_persist_object(save_root))
 	assert(!_is_procedural_object(save_root), "'save_root' must be non-procedural")
 	_is_detached = false
 	_build_tree(gamesave, save_root)
@@ -378,7 +371,6 @@ func _serialize_object_data(object: Object, serialized_object: Array) -> void:
 		for property in properties:
 			assert(property in object, "Specified persist property '%s' is not in object" % property)
 			var value: Variant = object.get(property)
-			assert(_debug_is_valid_persist_value(value))
 			serialized_object.append(_get_encoded_value(value))
 
 
@@ -419,9 +411,7 @@ func _get_encoded_value(value: Variant) -> Variant:
 	# "!" - WeakRef to an object. Digits after ! encode an object id. See _get_encoded_object().
 	#
 	# Note: "" is a reserved key used for dictionary type encoding that can't
-	# collide with anything above.
-	const PROHIBITED_TYPES: Array[int] = [TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]
-	
+	# collide with anything above.	
 	var type := typeof(value)
 	if type == TYPE_STRING:
 		return "'" + value
@@ -434,7 +424,7 @@ func _get_encoded_value(value: Variant) -> Variant:
 	if type == TYPE_DICTIONARY:
 		var dict: Dictionary = value
 		return _get_encoded_dict(dict) # dict
-	assert(!PROHIBITED_TYPES.has(type), "Attempted to persist prohibited type %s" % type)
+	assert(!PROHIBITED_TYPES.has(type), "Can't persist type %s" % type)
 	return value # all other built-in types encoded as is
 
 
@@ -462,12 +452,12 @@ func _get_encoded_array(array: Array) -> Array:
 	# replicate array type but must be filled item by item.
 	# 
 	# Untyped and object-typed arrays are both encoded as untyped arrays. We
-	# append info to allow decoding.
-	
+	# append type info to allow decoding.
 	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
 	
 	var array_type := array.get_typed_builtin()
 	if !UNSAFE_TYPES.has(array_type):
+		assert(!PROHIBITED_TYPES.has(array_type), "Can't persist type %s" % array_type)
 		return array.duplicate() # duplicates array type!
 	
 	var size := array.size()
@@ -532,6 +522,8 @@ func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 	var key_type := dict.get_typed_key_builtin()
 	var value_type := dict.get_typed_value_builtin()
 	if !UNSAFE_TYPES.has(key_type) and !UNSAFE_TYPES.has(value_type):
+		assert(!PROHIBITED_TYPES.has(key_type), "Can't persist type %s" % key_type)
+		assert(!PROHIBITED_TYPES.has(value_type), "Can't persist type %s" % value_type)
 		return dict.duplicate() # duplicates dict type!
 	
 	# All others will be encoded as a fully untyped dict with typing stored at
@@ -602,10 +594,9 @@ func _get_encoded_object(object: Object) -> String:
 		if object == null:
 			return "!" # WeakRef to a dead object
 		is_weak_ref = true
-	assert(_debug_assert_persist_object(object))
 	var object_id: int = _object_ids.get(object, -1)
 	if object_id == -1:
-		# We should have indexed all Nodes once in initial tree indexing!
+		# We should have indexed all Nodes already.
 		assert(object is RefCounted, "Possible reference to Node that is not in the tree")
 		var ref: RefCounted = object
 		object_id = _index_and_serialize_ref(ref)
@@ -640,138 +631,6 @@ func _is_procedural_object(object: Object) -> bool:
 	if &"PERSIST_MODE" in object:
 		return object.get(&"PERSIST_MODE") == PERSIST_PROCEDURAL
 	return false
-
-
-func _debug_is_valid_persist_value(value: Variant) -> bool:
-	# Enforce persist property rules on save so we don't have more difficult
-	# debugging on load. Wrap this function call in assert so it is only called
-	# in editor and debug builds.
-	var type := typeof(value)
-	if type == TYPE_ARRAY:
-		var array: Array = value
-		var array_type := array.get_typed_builtin()
-		if array_type == TYPE_NIL:
-			# no objects in untyped arrays!
-			return _debug_assert_data_only_array(array)
-		if array_type == TYPE_ARRAY:
-			# no nested objects allowed!
-			for nested_array: Array in array:
-				if !_debug_assert_data_only_array(nested_array):
-					return false
-			return true
-		if array_type == TYPE_DICTIONARY:
-			# no nested objects allowed!
-			for nested_dict: Dictionary in array:
-				if !_debug_assert_data_only_dictionary(nested_dict):
-					return false
-			return true
-		if array_type == TYPE_OBJECT:
-			return true # assert objects valid in _get_encoded_object()
-		if array_type == TYPE_RID or array_type == TYPE_CALLABLE or array_type == TYPE_SIGNAL:
-			assert(false, "Disallowed array type can't be persisted")
-			return false
-		return true # safe data-typed array
-	if type == TYPE_DICTIONARY:
-		var dict: Dictionary = value
-		for key: Variant in dict:
-			if !_debug_assert_persist_dictionary_element(key):
-				return false
-			var dict_value: Variant = dict[key]
-			if !_debug_assert_persist_dictionary_element(dict_value):
-				return false
-		return true
-	if type == TYPE_OBJECT:
-		return true # assert valid object in _get_encoded_object()
-	if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-		assert(false, "Disallowed type can't be persisted")
-		return false
-	return true
-
-
-func _debug_assert_persist_object(object: Object) -> bool:
-	if not object is RefCounted and not object is Node:
-		assert(false, "Persist objects must be Node or RefCounted")
-		return false
-	if !_is_persist_object(object):
-		assert(false, "Can't persist a non-persist object; see IVTreeSaver doc")
-		return false
-	return true
-
-
-func _debug_assert_persist_dictionary_element(key_or_value: Variant) -> bool:
-	# Object ok as key or value, but objects can't be nested.
-	var type := typeof(key_or_value)
-	if type == TYPE_OBJECT:
-		var object: Object = key_or_value
-		return _debug_assert_persist_object(object)
-	if type == TYPE_ARRAY:
-		var array: Array = key_or_value
-		return _debug_assert_data_only_array(array)
-	if type == TYPE_DICTIONARY:
-		var dict: Dictionary = key_or_value
-		return _debug_assert_data_only_dictionary(dict)
-	if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-		assert(false, "Disallowed type can't be persisted")
-		return false
-	return true
-
-
-func _debug_assert_data_only_array(array: Array) -> bool:
-	# Untyped or nested arrays can't contain objects.
-	for value: Variant in array:
-		var type := typeof(value)
-		if type == TYPE_OBJECT:
-			assert(false, "Disallowed object in untyped or nested array; see IVTreeSaver doc")
-			return false
-		if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-			assert(false, "Disallowed type can't be persisted")
-			return false
-		elif type == TYPE_ARRAY:
-			var array_value: Array = value
-			if !_debug_assert_data_only_array(array_value):
-				return false
-		elif type == TYPE_DICTIONARY:
-			var dict_value: Dictionary = value
-			if !_debug_assert_data_only_dictionary(dict_value):
-				return false
-	return true
-
-
-func _debug_assert_data_only_dictionary(dict: Dictionary) -> bool:
-	# Nested dictionaries can't contain objects.
-	for key: Variant in dict:
-		var type := typeof(key)
-		if type == TYPE_OBJECT:
-			assert(false, "Disallowed object in nested dictionary; see IVTreeSaver doc")
-			return false
-		if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-			assert(false, "Disallowed type can't be persisted")
-			return false
-		elif type == TYPE_ARRAY:
-			var array_key: Array = key
-			if !_debug_assert_data_only_array(array_key):
-				return false
-		elif type == TYPE_DICTIONARY:
-			var dict_key: Dictionary = key
-			if !_debug_assert_data_only_dictionary(dict_key):
-				return false
-		var value: Variant = dict[key]
-		type = typeof(value)
-		if type == TYPE_OBJECT:
-			assert(false, "Disallowed object in nested dictionary; see IVTreeSaver doc")
-			return false
-		if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-			assert(false, "Disallowed type can't be persisted")
-			return false
-		elif type == TYPE_ARRAY:
-			var array_value: Array = value
-			if !_debug_assert_data_only_array(array_value):
-				return false
-		elif type == TYPE_DICTIONARY:
-			var dict_value: Dictionary = value
-			if !_debug_assert_data_only_dictionary(dict_value):
-				return false
-	return true
 
 
 func _dprint(arg: Variant, arg2: Variant = "", arg3: Variant = "", arg4: Variant = "") -> bool:

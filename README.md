@@ -58,16 +58,15 @@ const SCENE_OVERRIDE := "<path to .tscn file>" (Useful in a sublcass.)
 ```
 
 Special rules for "persist" objects:
-1. Objects cannot be deeply nested in containers. They can only be elements of directly persisted arrays or keys or values of directly persisted dictionaries. I.e., objects must be elements, keys or values of containers listed in an object's persist constant list.
-2. Arrays containing persist objects must be typed as TYPE_OBJECT.
-3. Objects CAN be referenced in multiple places. Even circular references are ok. However, code here can only null object properties listed in "persist" constant arrays during tree deconstruction. Any other references to these objects must be nulled by some other code.
-4. Nodes must be in the tree.
-5. All ancester nodes up to and including save_root must also be persist nodes.
-6. Non-procedural Nodes (i.e., PERSIST_PROPERTIES_ONLY) cannot have any ancestors that are PERSIST_PROCEDURAL.
-7. Non-procedural Nodes must have stable node path.
-8. Inner classes can't be persist objects.
-9. A persisted RefCounted can only be PERSIST_PROCEDURAL.
-10. Persist objects cannot have required args in their _init() method.
+
+1. Nodes must be in the tree.
+2. All ancester nodes up to and including save_root must also be persist nodes.
+3. Non-procedural Nodes (i.e., PERSIST_PROPERTIES_ONLY) cannot have any ancestors that are PERSIST_PROCEDURAL.
+4. Non-procedural Nodes must have stable node path.
+5. Inner classes can't be persist objects.
+6. A persisted RefCounted can only be PERSIST_PROCEDURAL.
+7. Persist objects cannot have required args in their _init() method.
+8. Objects CAN be referenced in multiple places. Even circular references are ok. However, code here can only null object properties listed in "persist" constant arrays during tree deconstruction. Any other references to these objects must be nulled by some other code.
 
 Warnings:
 1. Godot does not allow us to index arrays and dictionaries by reference rather than content (see proposal #874 to fix this). Therefore, a single array or dictionary persisted in two places (i.e., listed in PERSIST_PROPERTIES in two files) will become two separate arrays or dictionaries on load. (This does not happen for Objects!)
