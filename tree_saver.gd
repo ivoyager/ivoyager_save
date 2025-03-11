@@ -447,12 +447,7 @@ func _get_decoded_value(encoded_value: Variant) -> Variant:
 
 
 func _get_encoded_array(array: Array) -> Array:
-	# Typed arrays with non-container built-ins can be duplicated, which
-	# replicates the array type. Array[Array] and Array[Dictionary] can
-	# replicate array type but must be filled item by item.
-	# 
-	# Untyped and object-typed arrays are both encoded as untyped arrays. We
-	# append type info to allow decoding.
+	
 	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
 	
 	var array_type := array.get_typed_builtin()
@@ -460,24 +455,24 @@ func _get_encoded_array(array: Array) -> Array:
 		assert(!PROHIBITED_TYPES.has(array_type), "Can't persist type %s" % array_type)
 		return array.duplicate() # duplicates array type!
 	
+	# All others will be encoded as an untyped array with typing info
+	# appended. Type could be an object super-class (e.g., Node) in which case
+	# script_id will be -1.
+	
+	var array_class_name := &""
+	var array_script_id := -1
+	if array_type == TYPE_OBJECT:
+		array_class_name = array.get_typed_class_name()
+		var array_script: Script = array.get_typed_script()
+		if array_script:
+			array_script_id = _get_script_id(array_script)
+	
 	var size := array.size()
 	var encoded_array := []
-	if array_type == TYPE_NIL:
-		# We append -1 to distiguish from an encoded object array.
-		encoded_array.resize(size + 1)
-		encoded_array[-1] = -1
-	elif array_type == TYPE_OBJECT:
-		# The encoded array will be untyped. We append object info for decoding.
-		var script: Script = array.get_typed_script()
-		assert(script)
-		var script_id := _get_script_id(script) # always >= 0
-		encoded_array.resize(size + 2)
-		encoded_array[-1] = script_id
-		encoded_array[-2] = array.get_typed_class_name() # StringName
-	else: # TYPE_ARRAY, TYPE_DICTIONARY
-		# We can persisted array type in the encoded array.
-		encoded_array = Array(encoded_array, array_type, &"", null)
-		encoded_array.resize(size)
+	encoded_array.resize(size + 3)
+	encoded_array[-1] = array_type
+	encoded_array[-2] = array_class_name
+	encoded_array[-3] = array_script_id
 	
 	var index := 0
 	while index < size:
@@ -488,24 +483,16 @@ func _get_encoded_array(array: Array) -> Array:
 
 func _get_decoded_array(encoded_array: Array) -> Array:
 	# Inverse encoding above. Return type matches the original unencoded array.
-	
-	var encoded_type := encoded_array.get_typed_builtin()
-	if encoded_type != TYPE_NIL and encoded_type != TYPE_ARRAY and encoded_type != TYPE_DICTIONARY:
+	if encoded_array.is_typed():
 		return encoded_array.duplicate()
 	
-	var size := encoded_array.size()
-	var array := []
-	if encoded_type == TYPE_ARRAY or encoded_type == TYPE_DICTIONARY:
-		array = Array(array, encoded_type, &"", null)
-	elif encoded_array[-1] == -1: # originally untyped array
-		size -= 1
-	else: # object array
-		var typed_class_name: StringName = encoded_array[-2]
-		var script_id: int = encoded_array[-1]
-		var script := _scripts[script_id]
-		array = Array(array, TYPE_OBJECT, typed_class_name, script)
-		size -= 2
+	var array_type: int = encoded_array[-1]
+	var array_class_name: StringName = encoded_array[-2]
+	var array_script_id: int = encoded_array[-3]
+	var array_script := _scripts[array_script_id] if array_script_id != -1 else null
 	
+	var size := encoded_array.size() - 3
+	var array := Array([], array_type, array_class_name, array_script)
 	array.resize(size)
 	var index := 0
 	while index < size:
@@ -527,23 +514,24 @@ func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 		return dict.duplicate() # duplicates dict type!
 	
 	# All others will be encoded as a fully untyped dict with typing stored at
-	# key &"" (any StringName key is safe due to key encoding).
+	# TYPE_KEY (safe due to key encoding). Key or value type could be an
+	# object super-class (e.g., Node) in which case script_id will be -1.
 	
 	var key_class_name := &""
-	var key_script: Script
 	var key_script_id := -1
 	if key_type == TYPE_OBJECT:
 		key_class_name = dict.get_typed_key_class_name()
-		key_script = dict.get_typed_key_script()
-		key_script_id = _get_script_id(key_script)
+		var key_script: Script = dict.get_typed_key_script()
+		if key_script:
+			key_script_id = _get_script_id(key_script)
 	
 	var value_class_name := &""
-	var value_script: Script
 	var value_script_id := -1
 	if value_type == TYPE_OBJECT:
 		value_class_name = dict.get_typed_value_class_name()
-		value_script = dict.get_typed_value_script()
-		value_script_id = _get_script_id(value_script)
+		var value_script: Script = dict.get_typed_value_script()
+		if value_script:
+			value_script_id = _get_script_id(value_script)
 	
 	# Note: it's ok if TYPE_KEY exists as key in project dictionaries because
 	# _get_encoded_value(key) will never return that value.
