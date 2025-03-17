@@ -1,4 +1,4 @@
-# plugin.gd
+# editor_plugin.gd
 # This file is part of I, Voyager
 # https://ivoyager.dev
 # *****************************************************************************
