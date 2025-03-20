@@ -62,27 +62,20 @@ extends RefCounted
 ##
 ## Special rules for 'persist' objects:[br][br]
 ##
-##    1. Objects cannot be deeply nested in containers. They can only be
-##       elements of directly persisted arrays (i.e., the array is listed) or
-##       keys or values of directly persisted dictionaries (i.e., the dictionary
-##       is listed).[br]
-##    2. Arrays containing persist objects must be typed as [code]TYPE_OBJECT[/code].[br]
-##    3. For procedural tree deconstruction, [method free_procedural_objects_recursive]
-##       nulls all references to objects for properties that are listed. Any other
-##       references to these objects must be nulled by some other code
-##       (otherwise, old procedural RefCounted objects won't be freed).
-##       Objects can be referenced in multiple places and circular references
-##       are ok.[br]
-##    4. Nodes must be in the tree.[br]
-##    5. All ancester nodes up to and including [code]save_root[/code] must also be persist
+##    1. Nodes must be in the tree.[br]
+##    2. All ancester nodes up to and including [code]save_root[/code] must also be persist
 ##       nodes.[br]
-##    6. Non-procedural Nodes (i.e., that are [code]PERSIST_PROPERTIES_ONLY[/code]) cannot
+##    3. Non-procedural Nodes (i.e., that are [code]PERSIST_PROPERTIES_ONLY[/code]) cannot
 ##       have any ancestors that are [code]PERSIST_PROCEDURAL[/code].[br]
-##    7. Non-procedural Nodes must have stable node paths.[br]
-##    8. Inner classes can't be persist objects.[br]
-##    9. A persisted RefCounted can only be [code]PERSIST_PROCEDURAL[/code].[br]
-##    10. Persist objects cannot have required args in their [code]_init()[/code]
-##       method.[br][br]
+##    4. Non-procedural Nodes must have stable node paths.[br]
+##    5. Inner classes can't be persist objects.[br]
+##    6. A persisted RefCounted can only be [code]PERSIST_PROCEDURAL[/code].[br]
+##    7. Persist objects cannot have required args in their [code]_init()[/code]
+##       method.[br]
+##    8. Objects CAN be referenced in multiple places. Even circular references are ok. However,
+##       code here can only null object properties listed in "persist" constant arrays during tree
+##       deconstruction. Any other references to these objects must be nulled by some other code.
+##       [br][br]
 ##
 ## Warnings:[br][br]
 ##
@@ -102,9 +95,7 @@ extends RefCounted
 
 const DPRINT := false # set true for debug print
 
-const OBJECT_ID_OFFSET := 10_000_000_000_000 # allows this many different persist values
-const WEAKREF_ID_OFFSET := 2 * OBJECT_ID_OFFSET
-const WEAKREF_NULL_ID := 3 * OBJECT_ID_OFFSET
+const PROHIBITED_TYPES: Array[int] = [TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]
 
 const PersistMode := IVSaveUtils.PersistMode
 const NO_PERSIST := PersistMode.NO_PERSIST
@@ -115,21 +106,16 @@ const PERSIST_PROCEDURAL := PersistMode.PERSIST_PROCEDURAL
 # localized
 var _persist_property_lists := IVSaveUtils.persist_property_lists
 
-# gamesave contents
-# Note: FileAccess.store_var() & get_var() doesn't save or recover array type
-# as of Godot 4.2.dev5. We can't type these arrays yet!
+# gamesave file contents
 var _gamesave_n_objects := 0
-var _gamesave_serialized_nodes := []
-var _gamesave_serialized_refs := []
-var _gamesave_script_paths := []
-var _gamesave_indexed_values := []
+var _gamesave_serialized_nodes: Array[Array] = []
+var _gamesave_serialized_refs: Array[Array] = []
+var _gamesave_script_paths: Array[String] = []
 
 # save processing
 var _nonprocedural_path_root: Node
-var _object_ids := {} # indexed by objects
-var _script_ids := {} # indexed by script paths
-var _indexed_string_ids := {} # indexed by String values
-var _indexed_nonstring_ids := {} # indexed by non-String values (incl StringName)
+var _object_ids: Dictionary[Object, int] = {} # indexed by objects
+var _script_ids: Dictionary[String, int] = {} # indexed by script paths
 
 # load processing
 var _is_detached: bool
@@ -143,7 +129,6 @@ var _objects: Array[Object] = [] # indexed by object_id
 ## be a persist node. It may or may not be procedural (this will determine
 ## which 'build...' method to call later).
 func get_gamesave(save_root: Node) -> Array:
-	assert(_debug_assert_persist_object(save_root))
 	_nonprocedural_path_root = save_root
 	assert(!DPRINT or _dprint("* Registering tree for gamesave *"))
 	_index_tree(save_root)
@@ -154,7 +139,6 @@ func get_gamesave(save_root: Node) -> Array:
 		_gamesave_serialized_nodes,
 		_gamesave_serialized_refs,
 		_gamesave_script_paths,
-		_gamesave_indexed_values,
 		]
 	print("Persist objects saved: ", _gamesave_n_objects, "; nodes in tree: ",
 			save_root.get_tree().get_node_count())
@@ -188,7 +172,6 @@ func free_procedural_objects_recursive(root_node: Node) -> void:
 ## non-procedural node (using the same [param save_root] supplied in that method).
 func build_attached_tree(gamesave: Array, save_root: Node) -> void:
 	assert(save_root)
-	assert(_debug_assert_persist_object(save_root))
 	assert(!_is_procedural_object(save_root), "'save_root' must be non-procedural")
 	_is_detached = false
 	_build_tree(gamesave, save_root)
@@ -209,7 +192,6 @@ func _build_tree(gamesave: Array, save_root: Node = null) -> Node:
 	_gamesave_serialized_nodes = gamesave[1]
 	_gamesave_serialized_refs = gamesave[2]
 	_gamesave_script_paths = gamesave[3]
-	_gamesave_indexed_values = gamesave[4]
 	_load_scripts()
 	_locate_or_instantiate_objects(save_root) # null ok if all procedural
 	_deserialize_all_object_data()
@@ -227,12 +209,9 @@ func _reset() -> void:
 	_gamesave_serialized_nodes = []
 	_gamesave_serialized_refs = []
 	_gamesave_script_paths = []
-	_gamesave_indexed_values = []
 	_nonprocedural_path_root = null
 	_object_ids.clear()
 	_script_ids.clear()
-	_indexed_string_ids.clear()
-	_indexed_nonstring_ids.clear()
 	_objects.clear()
 	_scripts.clear()
 
@@ -270,7 +249,7 @@ func _locate_or_instantiate_objects(save_root: Node) -> void:
 	# 'save_root' can be null if all nodes are procedural.
 	assert(!DPRINT or _dprint("* Registering(/Instancing) Objects for Load *"))
 	_objects.resize(_gamesave_n_objects)
-	for serialized_node: Array in _gamesave_serialized_nodes:
+	for serialized_node in _gamesave_serialized_nodes:
 		var object_id: int = serialized_node[0]
 		var script_id: int = serialized_node[1]
 		# Assert user called the right build function
@@ -289,7 +268,7 @@ func _locate_or_instantiate_objects(save_root: Node) -> void:
 			assert(!DPRINT or _dprint(object_id, node, script_id, _gamesave_script_paths[script_id]))
 		assert(node)
 		_objects[object_id] = node
-	for serialized_ref: Array in _gamesave_serialized_refs:
+	for serialized_ref in _gamesave_serialized_refs:
 		var object_id: int = serialized_ref[0]
 		var script_id: int = serialized_ref[1]
 		var script: Script = _scripts[script_id]
@@ -302,14 +281,14 @@ func _locate_or_instantiate_objects(save_root: Node) -> void:
 
 func _deserialize_all_object_data() -> void:
 	assert(!DPRINT or _dprint("* Deserializing Objects for Load *"))
-	for serialized_node: Array in _gamesave_serialized_nodes:
+	for serialized_node in _gamesave_serialized_nodes:
 		_deserialize_object_data(serialized_node, true)
-	for serialized_ref: Array in _gamesave_serialized_refs:
+	for serialized_ref in _gamesave_serialized_refs:
 		_deserialize_object_data(serialized_ref, false)
 
 
 func _build_procedural_tree() -> void:
-	for serialized_node: Array in _gamesave_serialized_nodes:
+	for serialized_node in _gamesave_serialized_nodes:
 		var object_id: int = serialized_node[0]
 		if object_id == 0: # 'save_root' has no parent in the save
 			continue
@@ -392,7 +371,6 @@ func _serialize_object_data(object: Object, serialized_object: Array) -> void:
 		for property in properties:
 			assert(property in object, "Specified persist property '%s' is not in object" % property)
 			var value: Variant = object.get(property)
-			assert(_debug_is_valid_persist_value(value))
 			serialized_object.append(_get_encoded_value(value))
 
 
@@ -424,49 +402,41 @@ func _deserialize_object_data(serialized_object: Array, is_node: bool) -> void:
 
 
 func _get_encoded_value(value: Variant) -> Variant:
-	# Returns Array, Dictionary, int (object_id or index), or non-string
-	# built-in type.
+	# Returns any type other than Object or prohibited types. Encoded String
+	# type is overloaded to represent either a String or an Object, where
+	# the 1st character is an identifier:
+	#
+	# "'" - Everything after ' is an encoded string (encoded here).
+	# "*" - Object. Digits after * encode an object id. See _get_encoded_object().
+	# "!" - WeakRef to an object. Digits after ! encode an object id. See _get_encoded_object().
+	#
+	# Note: "" is a reserved key used for dictionary type encoding that can't
+	# collide with anything above.	
 	var type := typeof(value)
+	if type == TYPE_STRING:
+		return "'" + value
+	if type == TYPE_OBJECT:
+		var object: Object = value
+		return _get_encoded_object(object) # always a String begining with "*" or "!"
 	if type == TYPE_ARRAY:
 		var array: Array = value
 		return _get_encoded_array(array) # array
 	if type == TYPE_DICTIONARY:
 		var dict: Dictionary = value
 		return _get_encoded_dict(dict) # dict
-	if type == TYPE_OBJECT:
-		var object: Object = value
-		return _get_encoded_object(object) # int >= OBJECT_ID_OFFSET
-	
-	# Index string types to avoid duplicated strings (e.g., many dict keys).
-	# String/StringName are interchangeable as dictionary keys, so we index
-	# Strings in their own dictionary. We have to index int for the decode.
-	if type == TYPE_INT or type == TYPE_STRING_NAME:
-		var index: int = _indexed_nonstring_ids.get(value, -1)
-		if index == -1:
-			index = _gamesave_indexed_values.size()
-			_gamesave_indexed_values.append(value)
-			_indexed_nonstring_ids[value] = index
-		return index
-	if type == TYPE_STRING:
-		var index: int = _indexed_string_ids.get(value, -1)
-		if index == -1:
-			index = _gamesave_indexed_values.size()
-			_gamesave_indexed_values.append(value)
-			_indexed_string_ids[value] = index
-		return index
-	
-	# Built-in saved as-is
-	return value
+	assert(!PROHIBITED_TYPES.has(type), "Can't persist type %s" % type)
+	return value # all other built-in types encoded as is
 
 
 func _get_decoded_value(encoded_value: Variant) -> Variant:
-	# Decode int, Array or Dictionary; otherwise return as is.
+	# Inverse encoding above.
 	var encoded_type := typeof(encoded_value)
-	if encoded_type == TYPE_INT: # object or indexed value
-		var index: int = encoded_value
-		if index >= OBJECT_ID_OFFSET:
-			return _get_decoded_object(index)
-		return _gamesave_indexed_values[index]
+	if encoded_type == TYPE_STRING: # encoded String or Object
+		var encoded_string: String = encoded_value
+		if encoded_string[0] == "'":
+			return encoded_string.substr(1)
+		else:
+			return _get_decoded_object(encoded_string)
 	if encoded_type == TYPE_ARRAY:
 		var encoded_array: Array = encoded_value
 		return _get_decoded_array(encoded_array)
@@ -477,36 +447,32 @@ func _get_decoded_value(encoded_value: Variant) -> Variant:
 
 
 func _get_encoded_array(array: Array) -> Array:
-	# Typed arrays with non-container built-ins can be duplicated, which
-	# replicates the array type. Array[Array] and Array[Dictionary] can
-	# replicate array type but must be filled item by item.
-	# 
-	# Untyped and object-typed arrays are both encoded as untyped arrays. We
-	# append info to allow decoding.
+	
+	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
 	
 	var array_type := array.get_typed_builtin()
-	if (array_type != TYPE_NIL and array_type != TYPE_ARRAY and array_type != TYPE_DICTIONARY
-			and array_type != TYPE_OBJECT):
+	if !UNSAFE_TYPES.has(array_type):
+		assert(!PROHIBITED_TYPES.has(array_type), "Can't persist type %s" % array_type)
 		return array.duplicate() # duplicates array type!
+	
+	# All others will be encoded as an untyped array with typing info
+	# appended. Type could be an object super-class (e.g., Node) in which case
+	# script_id will be -1.
+	
+	var array_class_name := &""
+	var array_script_id := -1
+	if array_type == TYPE_OBJECT:
+		array_class_name = array.get_typed_class_name()
+		var array_script: Script = array.get_typed_script()
+		if array_script:
+			array_script_id = _get_script_id(array_script)
 	
 	var size := array.size()
 	var encoded_array := []
-	if array_type == TYPE_NIL:
-		# We append -1 to distiguish from an encoded object array.
-		encoded_array.resize(size + 1)
-		encoded_array[-1] = -1
-	elif array_type == TYPE_OBJECT:
-		# The encoded array will be untyped. We append object info for decoding.
-		var script: Script = array.get_typed_script()
-		assert(script)
-		var script_id := _get_script_id(script) # always >= 0
-		encoded_array.resize(size + 2)
-		encoded_array[-1] = script_id
-		encoded_array[-2] = array.get_typed_class_name() # StringName
-	else: # TYPE_ARRAY, TYPE_DICTIONARY
-		# We can persisted array type in the encoded array.
-		encoded_array = Array(encoded_array, array_type, &"", null)
-		encoded_array.resize(size)
+	encoded_array.resize(size + 3)
+	encoded_array[-1] = array_type
+	encoded_array[-2] = array_class_name
+	encoded_array[-3] = array_script_id
 	
 	var index := 0
 	while index < size:
@@ -517,24 +483,16 @@ func _get_encoded_array(array: Array) -> Array:
 
 func _get_decoded_array(encoded_array: Array) -> Array:
 	# Inverse encoding above. Return type matches the original unencoded array.
-	
-	var encoded_type := encoded_array.get_typed_builtin()
-	if encoded_type != TYPE_NIL and encoded_type != TYPE_ARRAY and encoded_type != TYPE_DICTIONARY:
+	if encoded_array.is_typed():
 		return encoded_array.duplicate()
 	
-	var size := encoded_array.size()
-	var array := []
-	if encoded_type == TYPE_ARRAY or encoded_type == TYPE_DICTIONARY:
-		array = Array(array, encoded_type, &"", null)
-	elif encoded_array[-1] == -1: # originally untyped array
-		size -= 1
-	else: # object array
-		var typed_class_name: StringName = encoded_array[-2]
-		var script_id: int = encoded_array[-1]
-		var script := _scripts[script_id]
-		array = Array(array, TYPE_OBJECT, typed_class_name, script)
-		size -= 2
+	var array_type: int = encoded_array[-1]
+	var array_class_name: StringName = encoded_array[-2]
+	var array_script_id: int = encoded_array[-3]
+	var array_script := _scripts[array_script_id] if array_script_id != -1 else null
 	
+	var size := encoded_array.size() - 3
+	var array := Array([], array_type, array_class_name, array_script)
 	array.resize(size)
 	var index := 0
 	while index < size:
@@ -544,48 +502,105 @@ func _get_decoded_array(encoded_array: Array) -> Array:
 
 
 func _get_encoded_dict(dict: Dictionary) -> Dictionary:
-	# TODO Godot 4.4: Dictionary typing!
-	var encoded_dict := {}
+	 
+	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
+	const TYPE_KEY := "" # not a possible return of _get_encoded_value()
+	
+	var key_type := dict.get_typed_key_builtin()
+	var value_type := dict.get_typed_value_builtin()
+	if !UNSAFE_TYPES.has(key_type) and !UNSAFE_TYPES.has(value_type):
+		assert(!PROHIBITED_TYPES.has(key_type), "Can't persist type %s" % key_type)
+		assert(!PROHIBITED_TYPES.has(value_type), "Can't persist type %s" % value_type)
+		return dict.duplicate() # duplicates dict type!
+	
+	# All others will be encoded as a fully untyped dict with typing stored at
+	# TYPE_KEY (safe due to key encoding). Key or value type could be an
+	# object super-class (e.g., Node) in which case script_id will be -1.
+	
+	var key_class_name := &""
+	var key_script_id := -1
+	if key_type == TYPE_OBJECT:
+		key_class_name = dict.get_typed_key_class_name()
+		var key_script: Script = dict.get_typed_key_script()
+		if key_script:
+			key_script_id = _get_script_id(key_script)
+	
+	var value_class_name := &""
+	var value_script_id := -1
+	if value_type == TYPE_OBJECT:
+		value_class_name = dict.get_typed_value_class_name()
+		var value_script: Script = dict.get_typed_value_script()
+		if value_script:
+			value_script_id = _get_script_id(value_script)
+	
+	# Note: it's ok if TYPE_KEY exists as key in project dictionaries because
+	# _get_encoded_value(key) will never return that value.
+	var encoded_dict := {TYPE_KEY : [key_type, key_class_name, key_script_id,
+			value_type, value_class_name, value_script_id]}
+	
 	for key: Variant in dict:
 		var encoded_key: Variant = _get_encoded_value(key)
 		encoded_dict[encoded_key] = _get_encoded_value(dict[key])
+	
 	return encoded_dict
 
 
 func _get_decoded_dict(encoded_dict: Dictionary) -> Dictionary:
-	var dict := {}
+	
+	const TYPE_KEY := "" # same as _get_encoded_dict()
+	
+	if encoded_dict.is_typed(): # only "safe" types!
+		return encoded_dict.duplicate()
+	
+	var dict_typing: Array = encoded_dict[TYPE_KEY]
+	var key_type: int = dict_typing[0]
+	var key_class_name: StringName = dict_typing[1]
+	var key_script_id: int = dict_typing[2]
+	var key_script := _scripts[key_script_id] if key_script_id != -1 else null
+	var value_type: int = dict_typing[3]
+	var value_class_name: StringName = dict_typing[4]
+	var value_script_id: int = dict_typing[5]
+	var value_script := _scripts[value_script_id] if value_script_id != -1 else null
+	
+	var dict := Dictionary({}, key_type, key_class_name, key_script,
+			value_type, value_class_name, value_script)
+	
 	for encoded_key: Variant in encoded_dict:
+		if is_same(encoded_key, TYPE_KEY):
+			continue
 		var key: Variant = _get_decoded_value(encoded_key)
 		dict[key] = _get_decoded_value(encoded_dict[encoded_key])
+	
 	return dict
 
 
-func _get_encoded_object(object: Object) -> int:
+func _get_encoded_object(object: Object) -> String:
 	var is_weak_ref := false
 	if object is WeakRef:
 		var wr: WeakRef = object
 		object = wr.get_ref()
 		if object == null:
-			return WEAKREF_NULL_ID # WeakRef to a dead object
+			return "!" # WeakRef to a dead object
 		is_weak_ref = true
-	assert(_debug_assert_persist_object(object))
 	var object_id: int = _object_ids.get(object, -1)
 	if object_id == -1:
+		# We should have indexed all Nodes already.
 		assert(object is RefCounted, "Possible reference to Node that is not in the tree")
 		var ref: RefCounted = object
 		object_id = _index_and_serialize_ref(ref)
 	if is_weak_ref:
-		return object_id + WEAKREF_ID_OFFSET # WeakRef
-	return object_id + OBJECT_ID_OFFSET # Object
+		return "!" + str(object_id) # WeakRef
+	return "*" + str(object_id) # Object
 
 
-func _get_decoded_object(encoded_object: int) -> Object:
-	if encoded_object < WEAKREF_ID_OFFSET:
-		return _objects[encoded_object - OBJECT_ID_OFFSET]
-	if encoded_object < WEAKREF_NULL_ID:
-		var object: Object = _objects[encoded_object - WEAKREF_ID_OFFSET]
-		return weakref(object)
-	return WeakRef.new() # weak ref to dead object
+func _get_decoded_object(encoded_object: String) -> Object:
+	# Inverse encoding above.
+	if encoded_object[0] == "*":
+		return _objects[int(encoded_object.to_int())] # ignores "*"
+	if encoded_object == "!":
+		return WeakRef.new() # weak ref to dead object
+	assert(encoded_object[0] == "!")
+	return weakref(_objects[int(encoded_object.to_int())]) # ignores "!"
 
 
 func _is_persist_object(object: Object) -> bool:
@@ -604,138 +619,6 @@ func _is_procedural_object(object: Object) -> bool:
 	if &"PERSIST_MODE" in object:
 		return object.get(&"PERSIST_MODE") == PERSIST_PROCEDURAL
 	return false
-
-
-func _debug_is_valid_persist_value(value: Variant) -> bool:
-	# Enforce persist property rules on save so we don't have more difficult
-	# debugging on load. Wrap this function call in assert so it is only called
-	# in editor and debug builds.
-	var type := typeof(value)
-	if type == TYPE_ARRAY:
-		var array: Array = value
-		var array_type := array.get_typed_builtin()
-		if array_type == TYPE_NIL:
-			# no objects in untyped arrays!
-			return _debug_assert_data_only_array(array)
-		if array_type == TYPE_ARRAY:
-			# no nested objects allowed!
-			for nested_array: Array in array:
-				if !_debug_assert_data_only_array(nested_array):
-					return false
-			return true
-		if array_type == TYPE_DICTIONARY:
-			# no nested objects allowed!
-			for nested_dict: Dictionary in array:
-				if !_debug_assert_data_only_dictionary(nested_dict):
-					return false
-			return true
-		if array_type == TYPE_OBJECT:
-			return true # assert objects valid in _get_encoded_object()
-		if array_type == TYPE_RID or array_type == TYPE_CALLABLE or array_type == TYPE_SIGNAL:
-			assert(false, "Disallowed array type can't be persisted")
-			return false
-		return true # safe data-typed array
-	if type == TYPE_DICTIONARY:
-		var dict: Dictionary = value
-		for key: Variant in dict:
-			if !_debug_assert_persist_dictionary_element(key):
-				return false
-			var dict_value: Variant = dict[key]
-			if !_debug_assert_persist_dictionary_element(dict_value):
-				return false
-		return true
-	if type == TYPE_OBJECT:
-		return true # assert valid object in _get_encoded_object()
-	if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-		assert(false, "Disallowed type can't be persisted")
-		return false
-	return true
-
-
-func _debug_assert_persist_object(object: Object) -> bool:
-	if not object is RefCounted and not object is Node:
-		assert(false, "Persist objects must be Node or RefCounted")
-		return false
-	if !_is_persist_object(object):
-		assert(false, "Can't persist a non-persist object; see IVTreeSaver doc")
-		return false
-	return true
-
-
-func _debug_assert_persist_dictionary_element(key_or_value: Variant) -> bool:
-	# Object ok as key or value, but objects can't be nested.
-	var type := typeof(key_or_value)
-	if type == TYPE_OBJECT:
-		var object: Object = key_or_value
-		return _debug_assert_persist_object(object)
-	if type == TYPE_ARRAY:
-		var array: Array = key_or_value
-		return _debug_assert_data_only_array(array)
-	if type == TYPE_DICTIONARY:
-		var dict: Dictionary = key_or_value
-		return _debug_assert_data_only_dictionary(dict)
-	if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-		assert(false, "Disallowed type can't be persisted")
-		return false
-	return true
-
-
-func _debug_assert_data_only_array(array: Array) -> bool:
-	# Untyped or nested arrays can't contain objects.
-	for value: Variant in array:
-		var type := typeof(value)
-		if type == TYPE_OBJECT:
-			assert(false, "Disallowed object in untyped or nested array; see IVTreeSaver doc")
-			return false
-		if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-			assert(false, "Disallowed type can't be persisted")
-			return false
-		elif type == TYPE_ARRAY:
-			var array_value: Array = value
-			if !_debug_assert_data_only_array(array_value):
-				return false
-		elif type == TYPE_DICTIONARY:
-			var dict_value: Dictionary = value
-			if !_debug_assert_data_only_dictionary(dict_value):
-				return false
-	return true
-
-
-func _debug_assert_data_only_dictionary(dict: Dictionary) -> bool:
-	# Nested dictionaries can't contain objects.
-	for key: Variant in dict:
-		var type := typeof(key)
-		if type == TYPE_OBJECT:
-			assert(false, "Disallowed object in nested dictionary; see IVTreeSaver doc")
-			return false
-		if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-			assert(false, "Disallowed type can't be persisted")
-			return false
-		elif type == TYPE_ARRAY:
-			var array_key: Array = key
-			if !_debug_assert_data_only_array(array_key):
-				return false
-		elif type == TYPE_DICTIONARY:
-			var dict_key: Dictionary = key
-			if !_debug_assert_data_only_dictionary(dict_key):
-				return false
-		var value: Variant = dict[key]
-		type = typeof(value)
-		if type == TYPE_OBJECT:
-			assert(false, "Disallowed object in nested dictionary; see IVTreeSaver doc")
-			return false
-		if type == TYPE_RID or type == TYPE_CALLABLE or type == TYPE_SIGNAL:
-			assert(false, "Disallowed type can't be persisted")
-			return false
-		elif type == TYPE_ARRAY:
-			var array_value: Array = value
-			if !_debug_assert_data_only_array(array_value):
-				return false
-		elif type == TYPE_DICTIONARY:
-			var dict_value: Dictionary = value
-			if !_debug_assert_data_only_dictionary(dict_value):
-				return false
-	return true
 
 
 func _dprint(arg: Variant, arg2: Variant = "", arg3: Variant = "", arg4: Variant = "") -> bool:

@@ -1,4 +1,4 @@
-# plugin.gd
+# editor_plugin.gd
 # This file is part of I, Voyager
 # https://ivoyager.dev
 # *****************************************************************************
@@ -30,14 +30,6 @@ var _autoloads := {}
 
 
 func _enter_tree() -> void:
-	
-	# FIXME: Delay is a hack fix until fully decoupled from ivoyager_core
-	await get_tree().process_frame
-	await get_tree().process_frame
-	await get_tree().process_frame
-	await get_tree().process_frame
-	await get_tree().process_frame
-	
 	plugin_utils.print_plugin_name_and_version("ivoyager_save"," - https://ivoyager.dev")
 	_config = plugin_utils.get_ivoyager_config("res://addons/ivoyager_save/save.cfg")
 	if !_config:
