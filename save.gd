@@ -19,9 +19,9 @@
 # *****************************************************************************
 extends Node
 
-## Singleton that provides API for saving and loading.
+## Singleton added as IVSave that provides API for saving and loading.
 ##
-## This node is added as singleton "IVSave". It provides methods for save via
+## Provides methods for save via
 ## file dialog, quicksave, autosave, load via file dialog, and quickload.[br][br]
 ##
 ## Callable properties should be set to ensure that save/load is allowed and
@@ -35,12 +35,22 @@ extends Node
 ## [code]IVSave.set_process_shortcut_input(false)[/code].[br][br]
 ##
 ## See [IVTreeSaver] for detailed comments on how to specify "persist"
-## properites and objects in your project.
+## objects and properites in your project.
+
+
+
+
+
+# TODO: Make Timer for autosave.
+
+
+
+
 
 signal save_started()
 signal save_finished()
 signal load_started()
-signal about_to_free_procedural_tree_for_load()
+signal about_to_free_procedural_nodes()
 signal about_to_build_procedural_tree_for_load()
 signal load_finished()
 signal status_changed(is_saving: bool, is_loading: bool)
@@ -57,11 +67,25 @@ enum SaveType {
 	AUTOSAVE,
 }
 
-## Prints procedural nodes at save and after load. 
-const DEBUG_PRINT_NODES := false
-## Frames delay after load before node print (in case procedural nodes build
-## additional nodes).
-const DEBUG_PRINT_NODES_DELAY := 60
+## Non-persist object.
+const NO_PERSIST := IVSaveUtils.PersistMode.NO_PERSIST
+## Object will not be freed (Node only; must have stable NodePath).
+const PERSIST_PROPERTIES_ONLY := IVSaveUtils.PersistMode.PERSIST_PROPERTIES_ONLY
+## Object will be freed and rebuilt on game load (Node or RefCounted).
+const PERSIST_PROCEDURAL := IVSaveUtils.PersistMode.PERSIST_PROCEDURAL
+
+## Set this constant to false to not assert in the case of unfreed procedural
+## objects after load. Note that in debug/editor builds, the plugin will always
+## register persist objects on save and before load, and then print a warning
+## and a list if any of the pre-load procedural objects still exist after load.
+const DEBUG_ASSERT_UNFREED_PROCEDURAL_OBJECTS := true
+## Set true to print all persist objects on save.
+const DEBUG_PRINT_PERSIST_OBJECTS_ON_SAVE := false
+## Set true to print all persist objects before load.
+const DEBUG_PRINT_PERSIST_OBJECTS_BEFORE_LOAD := false
+
+
+
 
 var is_saving: bool
 var is_loading: bool
@@ -239,8 +263,7 @@ func save_file(save_type := SaveType.NAMED_SAVE, path := "") -> void:
 	save_started.emit()
 	await get_tree().process_frame
 	var root := save_root if save_root else get_tree().get_current_scene()
-	if DEBUG_PRINT_NODES:
-		IVSaveUtils.print_debug_log(root, false)
+	assert(IVSaveUtils.debug_register_persist_objects(root, DEBUG_PRINT_PERSIST_OBJECTS_ON_SAVE))
 	var save_data: Array = _tree_saver.get_gamesave(root)
 	_store_data_to_file(save_data, path)
 	if save_type == SaveType.AUTOSAVE:
@@ -272,23 +295,22 @@ func load_file(load_last := false, path := "") -> void:
 		return
 	await get_tree().process_frame # ensure we are on the main thread
 	print("Loading " + path)
-	load_started.emit()
-	about_to_free_procedural_tree_for_load.emit()
 	var root := save_root if save_root else get_tree().get_current_scene()
-	IVSaveUtils.free_procedural_objects_recursive(root)
+	assert(IVSaveUtils.debug_register_persist_objects(root, DEBUG_PRINT_PERSIST_OBJECTS_BEFORE_LOAD))
+	load_started.emit()
+	about_to_free_procedural_nodes.emit()
+	await get_tree().process_frame
+	IVSaveUtils.free_procedural_nodes_recursive(root)
 	for i in load_build_delay:
 		await get_tree().process_frame
+	assert(IVSaveUtils.debug_report_unfreed_procedural_objects(DEBUG_ASSERT_UNFREED_PROCEDURAL_OBJECTS))
 	var save_data := _get_data_from_file(path)
 	about_to_build_procedural_tree_for_load.emit()
 	_tree_saver.build_attached_tree(save_data, root)
 	load_finished.emit()
 	is_loading = false
 	status_changed.emit(false, false)
-	if DEBUG_PRINT_NODES:
-		for i in DEBUG_PRINT_NODES_DELAY:
-			await get_tree().process_frame
-		IVSaveUtils.print_debug_log(root, true)
-	
+
 
 func has_file(path: String) -> bool:
 	var dir := DirAccess.open(path)
