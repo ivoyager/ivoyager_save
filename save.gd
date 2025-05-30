@@ -17,35 +17,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # *****************************************************************************
-extends Node
+extends Timer
 
 ## Singleton added as IVSave that provides API for saving and loading.
 ##
-## Provides methods for save via
-## file dialog, quicksave, autosave, load via file dialog, and quickload.[br][br]
+## Provides methods for save and load via file dialogs, quicksave, autosave,
+## and quickload (load last savefile).[br][br]
 ##
-## Callable properties should be set to ensure that save/load is allowed and
-## safe to procede. Game state must be stable before save or load initiates
-## (e.g., threads finished, etc.).[br][br]
+## Callables [member save_permit], [member save_checkpoint], [member load_permit]
+## and [member load_checkpoint] can be set to require permission tests and/or
+## await "checkpoints" before proceding to save or load. Game state must be
+## stable before save or load initiates (e.g., threads finished, etc.).[br][br]
 ##
-## By default, this node handles four action events that must exist in the
-## parent project: &"save_as", &"load_file", &"quicksave" and &"quickload".
-## Alternatively, you can handle your own action events elsewhere and call
-## methods here. To disable input handling in this node, use code
-## [code]IVSave.set_process_shortcut_input(false)[/code].[br][br]
+## This node is a [Timer] to facilitate time-based autosaves. It is configured with
+## [member Timer.ignore_time_scale] = true (and default [member Node.process_mode])
+## so the timer will be real-time and pause/unpause with game state. Method
+## [method start_autosave_timer] is provided to start the timer with interval
+## time in minutes (or stop the timer with 0.0). For turn-based autosaves
+## or other usage, call [method autosave] directly.[br][br]
+##
+## To process shortcut input, set [member input_enabled] = true and
+## "input_shortcut_" properties as needed.[br][br]
 ##
 ## See [IVTreeSaver] for detailed comments on how to specify "persist"
 ## objects and properites in your project.
-
-
-
-
-
-# TODO: Make Timer for autosave.
-
-
-
-
 
 signal save_started()
 signal save_finished()
@@ -86,8 +81,9 @@ const DEBUG_PRINT_PERSIST_OBJECTS_BEFORE_LOAD := false
 
 
 
-
+## Read-only.
 var is_saving: bool
+## Read-only.
 var is_loading: bool
 
 # TODO: Replace save_root
@@ -104,34 +100,45 @@ var is_loading: bool
 ## get_tree().get_current_scene().
 var save_root: Node = null
 
+## The current saves directory. This value will be cached if different than
+## [member fallback_directory].
+var directory: String: get = get_directory, set = set_directory
+## Cache path to persist the current save directory.
 var directory_cache_path := "user://cache/saves_dir.ivbinary"
 var fallback_directory := "user://saves"
 var autosave_subdirectory := "autosaves"
 var autosave_name := "Autosave"
 var autosave_number := 10
-var autosave_uses_suffix_generator := false ## if false, appends an integer up to autosave_number.
+## By default, autosaves will be named [member autosave_name] appended by an
+## an integer from 1 to [member autosave_number]. Set this value to true to
+## invoke callable [member suffix_generator] and set a different suffix.
+var autosave_uses_suffix_generator := false 
 var quicksave_name := "Quicksave"
-var quicksave_uses_suffix_generator := false ## If false, the single file will be overwritten.
+## By default, the single quicksave file will be named [member quicksave_name]
+## and will be overwritten. Set this value to true to invoke callable [member suffix_generator]
+## to generate multiple named quicksaves.
+var quicksave_uses_suffix_generator := false
 var file_extension := "GameSave"
 var file_description := "Game Save"
+
 
 ## Callable that supplies the base name for the save file.
 var name_generator := func() -> String:
 	return "Save"
-## Callable that supplies a suffix for the save file name. Placeholder method
-## supplies a modified date-time string from the operating system in the form:
-## "_YYYY-MM-DD_HH.MM.SS".
+## Callable that supplies a suffix for the save file name. The default
+## placeholder method supplies a modified date-time string from the operating
+## system in the form: "_YYYY-MM-DD_HH.MM.SS".
 var suffix_generator := func() -> String:
 	return "_" + Time.get_datetime_string_from_system().replace("T", "_").replace(":", ".")
-## Method must return true or false. If false, a save will not be initiated.
-var save_permission_test := func() -> bool: return true
-## Method must return true or false. If false, a load will not be initiated.
-var load_permission_test := func() -> bool: return true
-## Method, possibly a coroutine, awaited before save is started. Must return
+## Callable must return true or false. If false, a save will not be initiated.
+var save_permit := func() -> bool: return true
+## Callable must return true or false. If false, a load will not be initiated.
+var load_permit := func() -> bool: return true
+## Callable, possibly a coroutine, awaited before save is started. Must return
 ## true or false; if false, the save is aborted. Use to ensure that game
 ## state is stable (threads finished, etc.) before save starts.
 var save_checkpoint := func() -> bool: return true
-## Method, possibly a coroutine, awaited before load is started. Must return
+## Callable, possibly a coroutine, awaited before load is started. Must return
 ## true or false; if false, the load is aborted. Use to ensure that game
 ## state is stable (threads finished, etc.) before load starts.
 var load_checkpoint := func() -> bool: return true
@@ -141,11 +148,16 @@ var load_checkpoint := func() -> bool: return true
 ## destroyed.
 var load_build_delay := 5
 
+var input_enabled := false: get = get_input_enabled, set = set_input_enabled
+var input_shortcut_save_as := &"save_as"
+var input_shortcut_quicksave := &"quicksave"
+var input_shortcut_load_file := &"load_file"
+var input_shortcut_quickload := &"quickload"
 
 var _directory: String # globalized path
 
-@onready var _tree_saver := IVTreeSaver.new()
 
+@onready var _tree_saver := IVTreeSaver.new()
 
 
 func _ready() -> void:
@@ -154,28 +166,40 @@ func _ready() -> void:
 	if !dir_cache:
 		DirAccess.make_dir_recursive_absolute(directory_cache_path.get_base_dir())
 	else:
-		var directory: String = dir_cache.get_var()
-		if DirAccess.dir_exists_absolute(directory):
-			_directory = directory
+		var cached_directory: String = dir_cache.get_var()
+		if DirAccess.dir_exists_absolute(cached_directory):
+			_directory = cached_directory
 	if !_directory:
 		_directory = ProjectSettings.globalize_path(fallback_directory)
 		DirAccess.make_dir_recursive_absolute(_directory)
+	timeout.connect(autosave)
+	ignore_time_scale = true
+	set_process_shortcut_input(input_enabled)
 
 
 func _shortcut_input(event: InputEvent) -> void:
 	if !event.is_action_type() or !event.is_pressed():
 		return
-	if event.is_action_pressed(&"quicksave"):
+	if event.is_action_pressed(input_shortcut_quicksave):
 		quicksave()
-	elif event.is_action_pressed(&"save_as"):
+	elif event.is_action_pressed(input_shortcut_save_as):
 		save_file()
-	elif event.is_action_pressed(&"quickload"):
+	elif event.is_action_pressed(input_shortcut_quickload):
 		quickload()
-	elif event.is_action_pressed(&"load_file"):
+	elif event.is_action_pressed(input_shortcut_load_file):
 		load_file()
 	else:
 		return
 	get_viewport().set_input_as_handled()
+
+
+func get_input_enabled() -> bool:
+	return input_enabled
+
+
+func set_input_enabled(is_enabled: bool) -> void:
+	set_process_shortcut_input(is_enabled)
+	input_enabled = is_enabled
 
 
 func get_file_name(save_type := SaveType.NAMED_SAVE) -> String:
@@ -210,11 +234,7 @@ func get_directory() -> String:
 	return _directory
 
 
-## Will set the parent directory if [param path] points to the autosave
-## subdirectory. Expects globalized path.
 func set_directory(dir_path: String) -> void:
-	if dir_path.get_file() == autosave_subdirectory:
-		dir_path = dir_path.get_base_dir()
 	if dir_path == _directory:
 		return
 	var dir_cache := FileAccess.open(directory_cache_path, FileAccess.WRITE)
@@ -225,12 +245,12 @@ func set_directory(dir_path: String) -> void:
 	_directory = dir_path
 
 
-## File name is constructed according to "quicksave" class properties.
+## Path is constructed according to "quicksave_" properties.
 func quicksave() -> void:
 	save_file(SaveType.QUICKSAVE)
 
 
-## File name is constructed according to "autosave" class properties.
+## Path is constructed according to "autosave_" properties.
 func autosave() -> void:
 	save_file(SaveType.AUTOSAVE)
 
@@ -241,10 +261,20 @@ func quickload() -> void:
 	load_file(true)
 
 
+## Call with [param minutes] > 0.0 to start the autosave timer, or 0.0 to stop.
+## To manage autosaves by external code, call [method autosave] as needed.
+func start_autosave_timer(minutes: float) -> void:
+	var seconds := maxf(minutes * 60, 0.0)
+	if seconds == 0.0:
+		stop()
+		return
+	start(seconds)
+
+
 ## Use default args to request save dialog. [param path] is used only if
 ## [code]save_type == SaveType.NAMED_SAVE[/code].
 func save_file(save_type := SaveType.NAMED_SAVE, path := "") -> void:
-	if is_loading or !save_permission_test.call():
+	if is_loading or !save_permit.call():
 		return
 	if save_type != SaveType.NAMED_SAVE:
 		path = get_file_path(save_type)
@@ -253,9 +283,10 @@ func save_file(save_type := SaveType.NAMED_SAVE, path := "") -> void:
 		return
 	is_saving = true
 	status_changed.emit(true, false)
-	var await_result: bool = await save_checkpoint.call()
+	var checkpoint_return: Variant = await save_checkpoint.call()
 	await get_tree().process_frame # ensure we are on the main thread
-	if await_result == false:
+	assert(typeof(checkpoint_return) == TYPE_BOOL, "Callable 'save_checkpoint' must return a boolean")
+	if !checkpoint_return:
 		is_saving = false
 		status_changed.emit(false, false)
 		return
@@ -276,7 +307,7 @@ func save_file(save_type := SaveType.NAMED_SAVE, path := "") -> void:
 ## Use default args to request load dialog. If [code]load_last == true[/code],
 ## then [param path] will be ignored.
 func load_file(load_last := false, path := "") -> void:
-	if is_saving or !load_permission_test.call():
+	if is_saving or !load_permit.call():
 		return
 	if load_last:
 		path = get_last_modified_file_path(get_directory()) # "" if no files found
@@ -288,12 +319,13 @@ func load_file(load_last := false, path := "") -> void:
 		return
 	is_loading = true
 	status_changed.emit(false, true)
-	var await_result: bool = await load_checkpoint.call()
-	if await_result == false:
+	var checkpoint_return: Variant = await load_checkpoint.call()
+	await get_tree().process_frame # ensure we are on the main thread
+	assert(typeof(checkpoint_return) == TYPE_BOOL, "Callable 'load_checkpoint' must return a boolean")
+	if !checkpoint_return:
 		is_loading = false
 		status_changed.emit(false, false)
 		return
-	await get_tree().process_frame # ensure we are on the main thread
 	print("Loading " + path)
 	var root := save_root if save_root else get_tree().get_current_scene()
 	assert(IVSaveUtils.debug_register_persist_objects(root, DEBUG_PRINT_PERSIST_OBJECTS_BEFORE_LOAD))

@@ -39,7 +39,12 @@ func _open() -> void:
 
 
 func _on_file_selected(path: String) -> void:
-	IVSave.set_directory(current_dir)
+	# Set parent directory if this is autosave directory. (This is more for
+	# load, but here in case user manually saves to this directory for some reason.)
+	var directory := current_dir
+	if directory.get_file() == IVSave.autosave_subdirectory:
+		directory = directory.get_base_dir()
+	IVSave.set_directory(directory)
 	IVSave.save_file(IVSave.SaveType.NAMED_SAVE, path)
 
 

@@ -14,6 +14,7 @@ Breaks older savegame files!
 
 ### Added
 
+* Add Timer functionality for time-based autosaves.
 * Add debug functions to test for unfreed procedural objects (likely from RefCounteds with unlisted references).
 * More and better doc comments.
 
