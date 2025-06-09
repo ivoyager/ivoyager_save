@@ -24,63 +24,70 @@ extends RefCounted
 ## specified (and [u]only[/u] specified) objects and properties in a scene tree.
 ## 2) Set properties and rebuild procedural parts of the scene tree on game load.
 ##
-## This system can persist properties that contain Godot built-in types and two
-## kinds of "persist objects":[br][br]
+## This system can persist properties recursively that are Godot built-in types
+## or one of two kinds of "persist objects":[br][br]
 ##    
-##    1. "Properties-only" ([Node]) - May have persist data but won't be
-##       freed on game load.[br]
-##    2. "Procedural" ([Node] or [RefCounted]) - These will be freed and rebuilt
-##       on game load.[br][br]
+## 1. A [b]"properties-only"[/b] [Node] can have persist data but won't be freed and
+##    rebuilt on game load.[br]
+## 2. A [b]"procedural"[/b] [Node] or [RefCounted] will be freed and rebuilt on game
+##    load.[br][br]
 ##
 ## A Node or RefCounted is identified as a "persist object" by the constant
 ## [code]PERSIST_MODE[/code] with one of the two values:[br][br]
 ##
-##    [code]const PERSIST_MODE := IVSave.PERSIST_PROPERTIES_ONLY[/code][br]
-##    [code]const PERSIST_MODE := IVSave.PERSIST_PROCEDURAL[/code][br][br]
-##   
-## Persisted properties can hold built-in types and other "persist objects".
-## Persisted arrays and dictionaries can be nested at any level of complexity
-## (except see rule #9 below). Persisted properties can be typed or untyped,
-## although processing of arrays and dictionaries will be faster if typed.[br][br]
+## [code]const PERSIST_MODE := IVSave.PERSIST_PROPERTIES_ONLY[/code][br]
+## [code]const PERSIST_MODE := IVSave.PERSIST_PROCEDURAL[/code][br][br]
 ##
-## [u]Only[/u] listed properties are persisted. Lists are specified as constant
+## Only listed properties are persisted. Lists are specified as constant
 ## arrays in the persist object class:[br][br]
 ##
-##    [code]const PERSIST_PROPERTIES: Array[StringName] = [&"property1", &"property2"][/code][br]
-##    [code]const PERSIST_PROPERTIES2: Array[StringName] = [&"property3", &"property4"][/code][br]
-## (These list names can be modified in [member IVSaveUtils.persist_property_lists].
+## [code]const PERSIST_PROPERTIES: Array[StringName] = [&"property1", &"property2", ...][/code][br]
+## [code]const PERSIST_PROPERTIES2: Array[StringName] = [&"property3", &"property4", ...][/code]
+## [br][br]
+##
+## List names can be modified or appended in [member IVSaveUtils.persist_property_lists].
 ## Multiple lists are supported so that subclasses can add persist properties to
-## parent classes.)[br][br]
+## parent classes.[br][br]
 ##
-## During tree build, [Node]s are generally instantiated as scripts, i.e., using
+## Properties can be typed or untyped, although typed is more optimal. Content-
+## typed arrays and dictionaries are especially optimal because data-only
+## containers don't need to be iteratated. Persist objects and containers can be
+## nested within containers at any level of depth or complexity, following rules
+## below. Lists or listed containers can also include WeakRef instances that
+## reference persist objects or null.[br][br]
+##
+## During tree build, procedural [Node]s are generally instantiated as scripts using
 ## [code]Script.new()[/code]. To instantiate a scene instead, the base [Node]'s
-## GDScript must have one of:[br][br]
+## GDScript can have one of:[br][br]
 ##
-##    [code]const SCENE := "<path to .tscn file>"[/code][br]
-##    [code]const SCENE_OVERRIDE := "<path to .tscn file>"[/code] (for sublcassing)[br][br]
+## [code]const SCENE := "<path to .tscn file>"[/code][br]
+## [code]const SCENE_OVERRIDE := "<path to .tscn file>" # a subclass can override the parent path
+## [/code][br]
 ##
 ## Rules:[br][br]
 ##
-##    1. Persist [Node]s must be in the tree.[br]
-##    2. A persist [Node]'s ancesters, up to and including [code]save_root[/code],
-##       must also be persist [Node]s.[br]
-##    3. "Properties-only" [Node]s cannot have any ancestors that are "procedural".[br]
-##    4. "Properties-only" [Node]s must have stable node paths.[br]
-##    5. Inner classes can't be persist objects.[br]
-##    6. Persist [RefCounted]s can only be "procedural", not "properties-only".[br]
-##    7. Procedural objects cannot have required args in their [code]_init()[/code]
-##       method.[br]
-##    8. Procedural objects will be destroyed and re-created on load, so any
-##       references to these that are [u]not[/u] in persist lists must be
-##       handled by external code.[br]
-##    9. A persisted array or dictionary cannot be listed in two different
-##       persist lists or nested within itself. This limitation exists for
-##       arrays and dictionaries (unlike objects) because GDScript
-##       does not allow identification of arrays or dictionaries by reference
-##       (see [url=https://github.com/godotengine/godot-proposals/issues/874]
-##       proposal[/url] to fix this). Therefore, a single array or dictionary
-##       encountered by [IVTreeSaver] twice will become two separate arrays or
-##       dictionaries on load.[br][br]
+## 1. Persist [Node]s must be in the tree.[br]
+## 2. A persist [Node]'s ancestors, up to and including [code]save_root[/code],
+##    must also be persist [Node]s.[br]
+## 3. "Properties-only" [Node]s cannot have any ancestors that are "procedural".[br]
+## 4. "Properties-only" [Node]s must have stable node paths.[br]
+## 5. Inner classes can't be persist objects.[br]
+## 6. Persist [RefCounted]s can only be "procedural" (not "properties-only").[br]
+## 7. Any listed object (or object nested in a listed container) must be a
+##    "persist object" as defined here.[br]
+## 8. Procedural objects cannot have required args in their [code]_init()[/code]
+##    method.[br]
+## 9. Procedural objects will be destroyed and re-created on load, so any
+##    references to these that are not in persist lists must be handled by
+##    external code. (Listed properties will be set with new object references.)[br]
+## 10. A persisted array or dictionary cannot be referenced more than once,
+##    either directly in lists or indirectly via nesting. This limitation exists
+##    for arrays and dictionaries, unlike objects, because GDScript
+##    does not allow identification of arrays or dictionaries by reference
+##    (see [url=https://github.com/godotengine/godot-proposals/issues/874]
+##    proposal[/url] to fix this). Therefore, a single array or dictionary
+##    encountered by [IVTreeSaver] twice will become two separate arrays or
+##    dictionaries on load.[br][br]
 ##
 ## Forward compatability of game saves:[br][br]
 ##

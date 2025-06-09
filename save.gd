@@ -36,7 +36,7 @@ extends Timer
 ## time in minutes (or stop the timer with 0.0). For turn-based autosaves
 ## or other usage, call [method autosave] directly.[br][br]
 ##
-## To process shortcut input, set [member input_enabled] = true and
+## To process shortcut input, set [member input_enabled] = true and modify
 ## "input_shortcut_" properties as needed.[br][br]
 ##
 ## See [IVTreeSaver] for detailed comments on how to specify "persist"
