@@ -21,86 +21,88 @@ class_name IVTreeSaver
 extends RefCounted
 
 ## Provides functions to: 1) Generate a compact game-save data structure from
-## properties specified in object constants in a scene tree. 2) Set properties
-## and rebuild procedural parts of the scene tree on game load.
+## specified (and [u]only[/u] specified) objects and properties in a scene tree.
+## 2) Set properties and rebuild procedural parts of the scene tree on game load.
 ##
-## This system can persist Godot built-in types (including [Array] and
-## [Dictionary]) and four kinds of 'persist' objects:[br][br]
+## This system can persist properties recursively that are Godot built-in types
+## or one of two kinds of "persist objects":[br][br]
 ##    
-##    1. 'Non-procedural' [Node] - May have persist data but won't be freed on
-##       game load.[br]
-##    2. 'Procedural' [Node] - These will be freed and rebuilt on game load.[br]
-##    3. 'Procedural' [RefCounted] - These will be freed and rebuilt on game load.[br]
-##    4. [WeakRef] to any of above.[br][br]
+## 1. A [b]"properties-only"[/b] [Node] can have persist data but won't be freed and
+##    rebuilt on game load.[br]
+## 2. A [b]"procedural"[/b] [Node] or [RefCounted] will be freed and rebuilt on game
+##    load.[br][br]
 ##
-## Arrays and dictionaries containing non-object data can be nested at any
-## level of complexity (array types are also persisted). Arrays and
-## dictionaries can contain 'persist' objects but must follow rules below
-## under 'Special rules for persist objects'.[br][br]
+## A Node or RefCounted is identified as a "persist object" by the constant
+## [code]PERSIST_MODE[/code] with one of the two values:[br][br]
 ##
-## A Node or RefCounted is identified as a 'persist' object by the presence of
-## any one of the following:[br][br]
+## [code]const PERSIST_MODE := IVSave.PERSIST_PROPERTIES_ONLY[/code][br]
+## [code]const PERSIST_MODE := IVSave.PERSIST_PROCEDURAL[/code][br][br]
 ##
-##    [code]const PERSIST_MODE := IVTreeSaver.PERSIST_PROPERTIES_ONLY[/code][br]
-##    [code]const PERSIST_MODE := IVTreeSaver.PERSIST_PROCEDURAL[/code][br]
-##    [code]var persist_mode_override := [/code] <either of above two values>[br][br]
+## Only listed properties are persisted. Lists are specified as constant
+## arrays in the persist object class:[br][br]
 ##
-## Lists of properties to persist must be named in object constant arrays:[br][br]
+## [code]const PERSIST_PROPERTIES: Array[StringName] = [&"property1", &"property2", ...][/code][br]
+## [code]const PERSIST_PROPERTIES2: Array[StringName] = [&"property3", &"property4", ...][/code]
+## [br][br]
 ##
-##    [code]const PERSIST_PROPERTIES: Array[StringName] = [&"property1", &"property2"][/code][br]
-##    [code]const PERSIST_PROPERTIES2: Array[StringName] = [&"property3", &"property4"][/code]
-##         (for sublcassing)[br]
-##    (These list names can be modified in [member IVSaveUtils.persist_property_lists].)
-##    [br][br]
+## List names can be modified or appended in [member IVSaveUtils.persist_property_lists].
+## Multiple lists are supported so that subclasses can add persist properties to
+## parent classes.[br][br]
 ##
-## During tree build, Nodes are generally instantiated as scripts: i.e., using
-## [code]Script.new()[/code]. To instantiate a scene instead, the base Node's
-## GDScript must have one of:[br][br]
+## Properties can be typed or untyped, although typed is more optimal. Content-
+## typed arrays and dictionaries are especially optimal because data-only
+## containers don't need to be iteratated. Persist objects and containers can be
+## nested within containers at any level of depth or complexity, following rules
+## below. Lists or listed containers can also include WeakRef instances that
+## reference persist objects or null.[br][br]
 ##
-##    [code]const SCENE := "<path to .tscn file>"[/code][br]
-##    [code]const SCENE_OVERRIDE := "<path to .tscn file>"[/code] (for sublcassing)[br][br]
+## During tree build, procedural [Node]s are generally instantiated as scripts using
+## [code]Script.new()[/code]. To instantiate a scene instead, the base [Node]'s
+## GDScript can have one of:[br][br]
 ##
-## Special rules for 'persist' objects:[br][br]
+## [code]const SCENE := "<path to .tscn file>"[/code][br]
+## [code]const SCENE_OVERRIDE := "<path to .tscn file>" # a subclass can override the parent path
+## [/code][br]
 ##
-##    1. Nodes must be in the tree.[br]
-##    2. All ancester nodes up to and including [code]save_root[/code] must also be persist
-##       nodes.[br]
-##    3. Non-procedural Nodes (i.e., that are [code]PERSIST_PROPERTIES_ONLY[/code]) cannot
-##       have any ancestors that are [code]PERSIST_PROCEDURAL[/code].[br]
-##    4. Non-procedural Nodes must have stable node paths.[br]
-##    5. Inner classes can't be persist objects.[br]
-##    6. A persisted RefCounted can only be [code]PERSIST_PROCEDURAL[/code].[br]
-##    7. Persist objects cannot have required args in their [code]_init()[/code]
-##       method.[br]
-##    8. Objects CAN be referenced in multiple places. Even circular references are ok. However,
-##       code here can only null object properties listed in "persist" constant arrays during tree
-##       deconstruction. Any other references to these objects must be nulled by some other code.
-##       [br][br]
+## Rules:[br][br]
 ##
-## Warnings:[br][br]
-##
-##    1. Godot does not allow us to index arrays and dictionaries by reference rather
-##       than content (see [url=https://github.com/godotengine/godot-proposals/issues/874]
-##       proposal #874[/url] to fix this). Therefore, a single array
-##       or dictionary persisted in two places (i.e., listed in [code]PERSIST_PROPERTIES[/code]
-##       in two files) will become two separate arrays or dictionaries on load.[br][br]
+## 1. Persist [Node]s must be in the tree.[br]
+## 2. A persist [Node]'s ancestors, up to and including [code]save_root[/code],
+##    must also be persist [Node]s.[br]
+## 3. "Properties-only" [Node]s cannot have any ancestors that are "procedural".[br]
+## 4. "Properties-only" [Node]s must have stable node paths.[br]
+## 5. Inner classes can't be persist objects.[br]
+## 6. Persist [RefCounted]s can only be "procedural" (not "properties-only").[br]
+## 7. Any listed object (or object nested in a listed container) must be a
+##    "persist object" as defined here.[br]
+## 8. Procedural objects cannot have required args in their [code]_init()[/code]
+##    method.[br]
+## 9. Procedural objects will be destroyed and re-created on load, so any
+##    references to these that are not in persist lists must be handled by
+##    external code. (Listed properties will be set with new object references.)[br]
+## 10. A persisted array or dictionary cannot be referenced more than once,
+##    either directly in lists or indirectly via nesting. This limitation exists
+##    for arrays and dictionaries, unlike objects, because GDScript
+##    does not allow identification of arrays or dictionaries by reference
+##    (see [url=https://github.com/godotengine/godot-proposals/issues/874]
+##    proposal[/url] to fix this). Therefore, a single array or dictionary
+##    encountered by [IVTreeSaver] twice will become two separate arrays or
+##    dictionaries on load.[br][br]
 ##
 ## Forward compatability of game saves:[br][br]
 ##
-## IVTreeSaver provides some [i]very limited[/i] flexibility for updating
-## classes while maintaining compatibility with older game saves.
-## Specifically, an updated class can have additional persist properties that
-## did not exist in the previous game save version. However, all properties in
-## the game save must exist in the updated class in the exact same order.
+## IVTreeSaver provides some limited flexibility for updating classes while
+## maintaining compatibility with older game save files. Specifically, an
+## updated class can have additional persist properties that did not exist in
+## the previous game save version. However, all properties in the save file must
+## still exist in the updated class and be listed in the exact same order.
+## I.e., the persist lists can grow, but previous content can't change.
+## If you persist the game version, then you can (in theory) add code to handle
+## the transition from old to new class properties.
 
 const DPRINT := false # set true for debug print
 
 const PROHIBITED_TYPES: Array[int] = [TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]
-
-const PersistMode := IVSaveUtils.PersistMode
-const NO_PERSIST := PersistMode.NO_PERSIST
-const PERSIST_PROPERTIES_ONLY := PersistMode.PERSIST_PROPERTIES_ONLY
-const PERSIST_PROCEDURAL := PersistMode.PERSIST_PROCEDURAL
 
 
 # localized
@@ -119,8 +121,8 @@ var _script_ids: Dictionary[String, int] = {} # indexed by script paths
 
 # load processing
 var _is_detached: bool
-var _scripts: Array[Script] = [] # indexed by script_id
 var _objects: Array[Object] = [] # indexed by object_id
+var _scripts: Array[Script] = [] # indexed by script_id
 
 
 ## Encodes the tree as a data array suitable for file storage, persisting only
@@ -163,16 +165,18 @@ func get_gamesave(save_root: Node) -> Array:
 ##
 ## You can also call this method before quit or exit to remove circular
 ## references to procedural objects.
-func free_procedural_objects_recursive(root_node: Node) -> void:
-	IVSaveUtils.free_procedural_objects_recursive(root_node)
+#func free_procedural_objects_recursive(root_node: Node) -> void:
+	#IVSaveUtils.free_procedural_objects_recursive(root_node)
 
 
 ## Rebuilds the tree from [param gamesave] data attached to an existing scene tree.
 ## Call this method if [param save_root] specified in [method get_gamesave] was a
 ## non-procedural node (using the same [param save_root] supplied in that method).
 func build_attached_tree(gamesave: Array, save_root: Node) -> void:
+	const PERSIST_PROPERTIES_ONLY := IVSaveUtils.PersistMode.PERSIST_PROPERTIES_ONLY
 	assert(save_root)
-	assert(!_is_procedural_object(save_root), "'save_root' must be non-procedural")
+	assert(type_convert(save_root.get(&"PERSIST_MODE"), TYPE_INT) == PERSIST_PROPERTIES_ONLY,
+			"'save_root' must have const PERSIST_MODE = PERSIST_PROPERTIES_ONLY")
 	_is_detached = false
 	_build_tree(gamesave, save_root)
 
@@ -181,7 +185,7 @@ func build_attached_tree(gamesave: Array, save_root: Node) -> void:
 ## method if [param save_root] specified in [method get_gamesave] was a
 ## procedural node. The method will return the new, procedurally instantiated
 ## [param save_root].
-## @experimental
+## @experimental: Not tested.
 func build_detached_tree(gamesave: Array) -> Node:
 	_is_detached = true
 	return _build_tree(gamesave)
@@ -220,25 +224,24 @@ func _reset() -> void:
 
 func _index_tree(node: Node) -> void:
 	# Make an object_id for all persist nodes by indexing in _object_ids.
-	# object_id = 0 is the 'save_root'.
 	_object_ids[node] = _gamesave_n_objects
 	_gamesave_n_objects += 1
 	for child in node.get_children():
-		if _is_persist_object(child):
+		if child.get(&"PERSIST_MODE"): # not null nor 0
 			_index_tree(child)
 
 
 func _serialize_tree(node: Node) -> void:
 	_serialize_node(node)
 	for child in node.get_children():
-		if _is_persist_object(child):
+		if child.get(&"PERSIST_MODE"): # not null nor 0
 			_serialize_tree(child)
 
 
 # Procedural load
 
 func _load_scripts() -> void:
-	for script_path: String in _gamesave_script_paths:
+	for script_path in _gamesave_script_paths:
 		var script: Script = load(script_path)
 		_scripts.append(script) # indexed by script_id
 
@@ -288,12 +291,13 @@ func _deserialize_all_object_data() -> void:
 
 
 func _build_procedural_tree() -> void:
+	const PERSIST_PROCEDURAL := IVSaveUtils.PersistMode.PERSIST_PROCEDURAL
 	for serialized_node in _gamesave_serialized_nodes:
 		var object_id: int = serialized_node[0]
 		if object_id == 0: # 'save_root' has no parent in the save
 			continue
 		var node: Node = _objects[object_id]
-		if _is_procedural_object(node):
+		if node[&"PERSIST_MODE"] == PERSIST_PROCEDURAL:
 			var parent_id: int = serialized_node[2]
 			var parent: Node = _objects[parent_id]
 			parent.add_child(node)
@@ -302,11 +306,12 @@ func _build_procedural_tree() -> void:
 # Serialize/deserialize functions
 
 func _serialize_node(node: Node) -> void:
+	const PERSIST_PROCEDURAL := IVSaveUtils.PersistMode.PERSIST_PROCEDURAL
 	var serialized_node := []
 	var object_id: int = _object_ids[node]
 	serialized_node.append(object_id) # index 0
 	var script_id := -1
-	var is_procedural := _is_procedural_object(node)
+	var is_procedural: bool = node[&"PERSIST_MODE"] == PERSIST_PROCEDURAL
 	if is_procedural:
 		var script: Script = node.get_script()
 		script_id = _get_script_id(script)
@@ -315,7 +320,7 @@ func _serialize_node(node: Node) -> void:
 		assert(!DPRINT or _dprint(object_id, node, node.name))
 	serialized_node.append(script_id) # index 1
 	# index 2 will be node path or parent_id or -1
-	if !is_procedural: # non-procedural
+	if !is_procedural: # "properties-only"
 		var node_path := _nonprocedural_path_root.get_path_to(node)
 		serialized_node.append(node_path) # index 2
 	elif object_id > 0: # procedural with parent in the tree
@@ -329,7 +334,8 @@ func _serialize_node(node: Node) -> void:
 
 
 func _index_and_serialize_ref(ref: RefCounted) -> int:
-	assert(_is_procedural_object(ref), "RefCounted must be PERSIST_PROCEDURAL")
+	const PERSIST_PROCEDURAL := IVSaveUtils.PersistMode.PERSIST_PROCEDURAL
+	assert(ref[&"PERSIST_MODE"] == PERSIST_PROCEDURAL, "RefCounted must be PERSIST_PROCEDURAL")
 	var object_id := _gamesave_n_objects
 	_gamesave_n_objects += 1
 	_object_ids[ref] = object_id
@@ -375,13 +381,8 @@ func _serialize_object_data(object: Object, serialized_object: Array) -> void:
 
 
 func _deserialize_object_data(serialized_object: Array, is_node: bool) -> void:
-	# The order of persist properties must be exactly the same from game save
-	# to game load. However, if a newer version (loading an older save) has
-	# added more persist properties at the end of a persist array const, these
-	# will not be touched and will not cause "data out of frame" mistakes.
-	# There is some opportunity here for backward compatibility if the newer
-	# version knows to init-on-load its added persist properties when loading
-	# an older version save file.
+	# The order of persist properties must be exactly the same from game save to
+	# game load. However, it's ok if a version-updated class has a longer list.
 	var index: int = 3 if is_node else 2
 	var object_id: int = serialized_object[0]
 	var object: Object = _objects[object_id]
@@ -393,7 +394,7 @@ func _deserialize_object_data(serialized_object: Array, is_node: bool) -> void:
 		var properties: Array = object.get(properties_array)
 		var property_index := 0
 		while property_index < n_properties:
-			var property: String = properties[property_index]
+			var property: StringName = properties[property_index]
 			var encoded_value: Variant = serialized_object[index]
 			index += 1
 			assert(property in object, "Specified persist property '%s' is not in object" % property)
@@ -601,24 +602,6 @@ func _get_decoded_object(encoded_object: String) -> Object:
 		return WeakRef.new() # weak ref to dead object
 	assert(encoded_object[0] == "!")
 	return weakref(_objects[int(encoded_object.to_int())]) # ignores "!"
-
-
-func _is_persist_object(object: Object) -> bool:
-	# Duplicated from IVSaveUtils for speed.
-	if &"persist_mode_override" in object:
-		return object.get(&"persist_mode_override") != NO_PERSIST
-	if &"PERSIST_MODE" in object:
-		return object.get(&"PERSIST_MODE") != NO_PERSIST
-	return false
-
-
-func _is_procedural_object(object: Object) -> bool:
-	# Duplicated from IVSaveUtils for speed.
-	if &"persist_mode_override" in object:
-		return object.get(&"persist_mode_override") == PERSIST_PROCEDURAL
-	if &"PERSIST_MODE" in object:
-		return object.get(&"PERSIST_MODE") == PERSIST_PROCEDURAL
-	return false
 
 
 func _dprint(arg: Variant, arg2: Variant = "", arg3: Variant = "", arg4: Variant = "") -> bool:

@@ -1,8 +1,7 @@
 # I, Voyager - Save (plugin)
 
-Provides API to:
-1. Generate a compact game-save data structure from properties specified in object constants in a scene tree.
-2. Set properties and rebuild procedural parts of a scene tree on game load.
+Provides API and GUI for saving and loading games that include procedurally generated node trees. The plugin is very fast because
+**only** specified objects and properties are persisted, as specified by class constants.
 
 
 ## Installation
@@ -20,53 +19,41 @@ Then enable "I, Voyager - Save" from the Godot Editor project menu.
 
 ## Usage
 
-The [IVSave](https://github.com/ivoyager/ivoyager_save/blob/master/save.gd) singleton has methods to save via file dialog, quicksave, autosave, load via file dialog, and quickload. By default, it is set up to handle action inputs `save_as`, `quicksave`, `load_file` and `quickload`. You can either add these actions in your project or disable shortcut handling in the singleton.
+The [IVSave](https://github.com/ivoyager/ivoyager_save/blob/master/save.gd) singleton has methods to save as (via file dialog), quicksave, autosave, load file (via file dialog), and quickload. These methods can be called directly or via shortcut input actions (if enabled) and an interval timer (for time-based autosaves, if enabled).
 
-The plugin also has [GUI Controls](https://github.com/ivoyager/ivoyager_save/tree/master/gui) that you can add to your project. These include two file dialogs (for save and load) and four menu buttons (corresponding to the four actions above).
+The plugin has [GUI Controls](https://github.com/ivoyager/ivoyager_save/tree/master/gui) that you can add to your project. These include two file dialogs (for save and load) and four menu buttons ("Load File", "Quickload", "Save As", and "Quicksave").
 
-The core functionality is encoded in the class [IVTreeSaver](https://github.com/ivoyager/ivoyager_save/blob/master/tree_saver.gd), which can convert a node tree into savable file data (and then back again) using properties specified in class constants.
+[IVTreeSaver](https://github.com/ivoyager/ivoyager_save/blob/master/tree_saver.gd) provides the recursive serialization/deserialization functionality. It can persist properties recursively that are Godot built-in types or one of two kinds of "persist objects":
 
-It can persist Godot built-in types (including arrays and dictionaries) and four kinds of "persist" objects:
+1. A **"properties-only"** Node can have persist properties but won't be freed and rebuilt on game load.
+2. A **"procedural"** Node or RefCounted will be freed and rebuilt on game load.
 
-1. "Non-procedural" Node - May have persist data but won't be freed on game load.
-2. "Procedural" Node - These will be freed and rebuilt on game load.
-3. "Procedural" RefCounted - These will be freed and rebuilt on game load.
-4. WeakRef to any of above.
+A Node or RefCounted is identified as a "persist object" by the constant `PERSIST_MODE` with one of the two values:
 
-Arrays and dictionaries containing non-object data can be nested at any level of complexity (array types are also persisted). Arrays and dictionaries can contain "persist" objects but must follow rules below under "Special rules for persist objects".
+`const PERSIST_MODE := IVSave.PERSIST_PROPERTIES_ONLY`  
+`const PERSIST_MODE := IVSave.PERSIST_PROCEDURAL`
 
-A Node or RefCounted is identified as a "persist" object by the presence of any one of the following:
+Only listed properties are persisted. Lists are specified as constant arrays in the persist object class:
 
-```
-const PERSIST_MODE := IVTreeSaver.PERSIST_PROPERTIES_ONLY
-const PERSIST_MODE := IVTreeSaver.PERSIST_PROCEDURAL
-var persist_mode_override :=  <either of above two values>
-```
-Lists of properties to persist must be named in object constant arrays:
+`const PERSIST_PROPERTIES: Array[StringName] = [&"property1", &"property2", ...]`  
+`const PERSIST_PROPERTIES2: Array[StringName] = [&"property3", &"property4", ...] # a subclass can add properties`
 
-```
-const PERSIST_PROPERTIES: Array[StringName] = []
-const PERSIST_PROPERTIES2: Array[StringName] = []
-(List names can be modified in IVSaveUtils static array persist_property_lists. The extra list is used by subclasses to add persist properties.)
-```
+Properties can be typed or untyped, although typed is more optimal. Content-typed arrays and dictionaries are especially optimal because data-only containers don't need to be iteratated. Persist objects and containers can be nested within containers at any level of depth or complexity, following rules below. Lists or listed containers can also include WeakRef instances that reference persist objects or null.
 
-During tree build, Nodes are generally instantiated as scripts: i.e., using Script.new(). To instantiate a scene instead, the base Node's GDScript must have one of:
+During tree build, procedural Nodes are generally instantiated as scripts using `Script.new()`. To instantiate a scene instead, the base Node's GDScript can have one of:
 
-```
-const SCENE := "<path to .tscn file>"
-const SCENE_OVERRIDE := "<path to .tscn file>" (Useful in a sublcass.)
-```
+`const SCENE := "<path to .tscn file>"`  
+`const SCENE_OVERRIDE := "<path to .tscn file>" # a subclass can override the parent path`
 
-Special rules for "persist" objects:
+Rules:
 
-1. Nodes must be in the tree.
-2. All ancester nodes up to and including save_root must also be persist nodes.
-3. Non-procedural Nodes (i.e., PERSIST_PROPERTIES_ONLY) cannot have any ancestors that are PERSIST_PROCEDURAL.
-4. Non-procedural Nodes must have stable node path.
+1. Persist Nodes must be in the tree.
+2. A persist Node's ancestors, up to and including the specified root, must also be persist Nodes.
+3. "Properties-only" Nodes cannot have any ancestors that are "procedural".
+4. "Properties-only" Nodes must have stable node paths.
 5. Inner classes can't be persist objects.
-6. A persisted RefCounted can only be PERSIST_PROCEDURAL.
-7. Persist objects cannot have required args in their _init() method.
-8. Objects CAN be referenced in multiple places. Even circular references are ok. However, code here can only null object properties listed in "persist" constant arrays during tree deconstruction. Any other references to these objects must be nulled by some other code.
-
-Warnings:
-1. Godot does not allow us to index arrays and dictionaries by reference rather than content (see proposal #874 to fix this). Therefore, a single array or dictionary persisted in two places (i.e., listed in PERSIST_PROPERTIES in two files) will become two separate arrays or dictionaries on load. (This does not happen for Objects!)
+6. Persist RefCounteds can only be "procedural" (not "properties-only").
+7. Any listed object (or object nested in a listed container) must be a persist object as defined here.
+8. Procedural objects cannot have required args in their `_init()` method.
+9. Procedural objects will be destroyed and re-created on load, so any references to these that are not in persist lists must be handled by external code. (Listed properties will be set with new object references.)
+10. A persisted array or dictionary cannot be referenced more than once, either directly in lists or indirectly via nesting. This limitation exists for arrays and dictionaries, unlike objects, because GDScript does not allow identification of arrays or dictionaries by reference (see [proposal](https://github.com/godotengine/godot-proposals/issues/874) to fix this). Therefore, a single array or dictionary encountered by IVTreeSaver twice will become two separate arrays or dictionaries on load.

@@ -21,19 +21,20 @@ class_name IVSaveUtils
 extends Object
 
 ## Static utility class that provides methods related to game save/load and
-## object 'persist' properties.
+## object "persist" properties.
 ##
 ## See [IVTreeSaver] for explanation of tree persistence.
 
+## Persist mode specified by an object's [param PERSIST_MODE] constant, if
+## present. Value 0 is hard-coded as the "no persist" identifier, so that
+## [code]object.get(&"PERSIST_MODE")[/code] is always null or 0 (false in
+## boolean context) for a non-persist object.
 enum PersistMode {
-	NO_PERSIST, ## Non-persist object.
+	NO_PERSIST = 0, ## Non-persist object.
 	PERSIST_PROPERTIES_ONLY, ## Object will not be freed (Node only; must have stable NodePath).
 	PERSIST_PROCEDURAL, ## Object will be freed and rebuilt on game load (Node or RefCounted).
 }
 
-const NO_PERSIST := PersistMode.NO_PERSIST
-const PERSIST_PROPERTIES_ONLY := PersistMode.PERSIST_PROPERTIES_ONLY
-const PERSIST_PROCEDURAL := PersistMode.PERSIST_PROCEDURAL
 
 ## A static list of names of the constants that define persist properties in a
 ## persist object. In base configuration these are [param &"PERSIST_PROPERTIES"]
@@ -45,20 +46,35 @@ static var persist_property_lists: Array[StringName] = [
 ]
 
 
-## See [method IVTreeSaver.free_procedural_objects_recursive].
-static func free_procedural_objects_recursive(root_node: Node) -> void:
-	_null_procedural_references_recursive(root_node, {})
-	free_procedural_nodes_recursive(root_node)
+static var _debug_persist_register: Dictionary[int, WeakRef] = {}
 
 
-## Frees all procedural [Node]s at or below [param root_node]. Note:
-## [method free_procedural_objects_recursive] provides a more thorough deconstruction
-## that can handle circular [RefCounted] references.
-static func free_procedural_nodes_recursive(root_node: Node) -> void:
-	if is_procedural_object(root_node):
-		root_node.queue_free() # children will also be freed!
+
+## Returns one of [enum PersistMode] enums (NO_PERSIST if constant
+## PERSIST_MODE is not present).
+static func get_persist_mode(object: Object) -> PersistMode:
+	return type_convert(object.get(&"PERSIST_MODE"), TYPE_INT)
+
+
+## Returns true if [param object] is [enum PersistMode.PERSIST_PROPERTIES_ONLY]
+## or [enum PersistMode.PERSIST_PROCEDURAL], otherwise false.
+static func is_persist_object(object: Object) -> bool:
+	return type_convert(object.get(&"PERSIST_MODE"), TYPE_BOOL) # 0 or null -> false
+
+
+## Returns true if [param object] is [enum PersistMode.PERSIST_PROCEDURAL],
+## otherwise false.
+static func is_procedural_object(object: Object) -> bool:
+	const PERSIST_PROCEDURAL := PersistMode.PERSIST_PROCEDURAL
+	return type_convert(object.get(&"PERSIST_MODE"), TYPE_INT) == PERSIST_PROCEDURAL
+
+
+## Frees all procedural [Node]s at or below [param node].
+static func free_procedural_nodes_recursive(node: Node) -> void:
+	if is_procedural_object(node):
+		node.queue_free() # children will also be freed!
 		return
-	for child in root_node.get_children():
+	for child in node.get_children():
 		if is_persist_object(child):
 			free_procedural_nodes_recursive(child)
 
@@ -130,37 +146,6 @@ static func get_persist_property_names(object: Object) -> Array[StringName]:
 	return array
 
 
-## Returns one of [enum PersistMode] enums. Returns [enum PersistMode.NO_PERSIST]
-## if [param object] does not have member [param PERSIST_MODE] or
-## [param persist_mode_override].
-static func get_persist_mode(object: Object) -> PersistMode:
-	if &"persist_mode_override" in object:
-		return object.get(&"persist_mode_override")
-	if &"PERSIST_MODE" in object:
-		return object.get(&"PERSIST_MODE")
-	return NO_PERSIST
-
-
-## Returns true if [param object] is [enum PersistMode.PERSIST_PROPERTIES_ONLY]
-## or [enum PersistMode.PERSIST_PROCEDURAL], otherwise false.
-static func is_persist_object(object: Object) -> bool:
-	if &"persist_mode_override" in object:
-		return object.get(&"persist_mode_override") != NO_PERSIST
-	if &"PERSIST_MODE" in object:
-		return object.get(&"PERSIST_MODE") != NO_PERSIST
-	return false
-
-
-## Returns true if [param object] is [enum PersistMode.PERSIST_PROCEDURAL],
-## otherwise false.
-static func is_procedural_object(object: Object) -> bool:
-	if &"persist_mode_override" in object:
-		return object.get(&"persist_mode_override") == PERSIST_PROCEDURAL
-	if &"PERSIST_MODE" in object:
-		return object.get(&"PERSIST_MODE") == PERSIST_PROCEDURAL
-	return false
-
-
 ## Returns an instantiated [Object] or the root [Node] of an instantiated scene.[br][br]
 ##
 ## [param arg] can be a [Script], [PackedScene], or [String]. If it is a String,
@@ -228,130 +213,116 @@ static func get_script_or_packedscene(path: String) -> Resource:
 	return script
 
 
-## Call before save and after load for a debug log. Delay the post-load call if
-## the loaded objects build additional tree items.
-static func print_debug_log(save_root: Node, compare_class_count: bool,
-		log_persist_nodes := true, log_all_nodes := false,
-		print_stray_nodes := false, print_tree := false) -> void:
-	var result := get_tree_debug_log(save_root, compare_class_count,
-		log_persist_nodes, log_all_nodes,
-		print_stray_nodes, print_tree)
-	for i in result.size():
-		print(result[i])
+## Use with [method debug_report_unfreed_procedural_objects] to test procedural
+## object freeing, which may fail due to circular references (including signal
+## connections) and cause leaks. Indexes all existing procedural objects using
+## weak references. After tree destruction and a frame delay, call
+## [method debug_report_unfreed_procedural_objects]. All "debug_" functions
+## always return true, so they can be wrapped inside assert() to call only in
+## editor/debug build.
+static func debug_register_persist_objects(root: Node, print_now := false) -> bool:
+	_register_persist_object_recursive(root)
+	if print_now:
+		debug_print_persist_register()
+	return true
 
 
-# logging
-static var _log_count_by_class := {}
+static func debug_print_persist_register(procedural_only := false) -> bool:
+	for id in _debug_persist_register:
+		var object: Object = _debug_persist_register[id].get_ref()
+		if !object:
+			continue
+		var is_procedural := is_procedural_object(object)
+		if is_procedural and procedural_only:
+			continue
+		var script: Script = object.get_script()
+		var file := script.resource_path.get_file()
+		prints(object, file, "" if is_procedural else "(properties only)")
+	return true
 
-## Call before save and after load for a debug log. Delay the post-load call if
-## the loaded objects build additional tree items.
-static func get_tree_debug_log(save_root: Node, compare_class_count: bool,
-		log_persist_nodes := true, log_all_nodes := false,
-		print_stray_nodes := false, print_tree := false) -> PackedStringArray:
+
+## Reports unfreed procedural objects and asserts none (by default) after
+## previous call(s) to [method debug_register_persist_objects]. All "debug_" functions
+## always return true, so they can be wrapped inside assert() to call only in
+## editor/debug build.
+static func debug_report_unfreed_procedural_objects(assert_none := true) -> bool:
+	var is_unfreed_procedural := false
+	for id in _debug_persist_register:
+		var object: Object = _debug_persist_register[id].get_ref()
+		if object and is_procedural_object(object):
+			is_unfreed_procedural = true
+			break
+	if is_unfreed_procedural:
+		push_error("Unfreed procedural objects exist. The list will follow...")
+		debug_print_persist_register(true)
+		assert(!assert_none, "Unfreed procedural objects. See Output for list.")
+	_debug_persist_register.clear()
+	return true
+
+
+static func _register_persist_object_recursive(object: Object) -> void:
+	assert(is_persist_object(object), "Non-persist Object specified or nested in persist list")
 	
-	var debug_log := PackedStringArray()
-	var count := 0
-	
-	debug_log.append("Number tree nodes: %s" % save_root.get_tree().get_node_count())
-	
-	if print_stray_nodes:
-		print("Stray Nodes:")
-		save_root.print_orphan_nodes()
-		print("***********************")
-	if print_tree:
-		print("Tree:")
-		save_root.print_tree_pretty()
-		print("***********************")
-	
-	if log_all_nodes or log_persist_nodes:
-		var last_log_count_by_class: Dictionary
-		if _log_count_by_class and compare_class_count:
-			last_log_count_by_class = _log_count_by_class.duplicate()
-		_log_count_by_class.clear()
-		count = _log_nodes(save_root, log_all_nodes, debug_log, count)
-		if last_log_count_by_class:
-			debug_log.append("Class counts difference from last count:")
-			for class_: String in _log_count_by_class:
-				if last_log_count_by_class.has(class_):
-					debug_log.append("%s %s" % [class_, _log_count_by_class[class_] - last_log_count_by_class[class_]])
-				else:
-					debug_log.append("%s %s" % [class_, _log_count_by_class[class_]])
-			for class_: String in last_log_count_by_class:
-				if !_log_count_by_class.has(class_):
-					debug_log.append("%s %s" % [class_, -last_log_count_by_class[class_]])
-		else:
-			debug_log.append("Class counts:")
-			for class_: String in _log_count_by_class:
-				debug_log.append("%s %s" % [class_, _log_count_by_class[class_]])
-	
-	return debug_log
-
-
-static func _log_nodes(node: Node, log_all_nodes: bool, debug_log: PackedStringArray, count: int) -> int:
-	count += 1
-	var class_ := node.get_class()
-	if _log_count_by_class.has(class_):
-		_log_count_by_class[class_] += 1
-	else:
-		_log_count_by_class[class_] = 1
-	var script_identifier := ""
-	if node.get_script():
-		@warning_ignore("unsafe_method_access")
-		var source_code: String = node.get_script().get_source_code()
-		if source_code:
-			var split := source_code.split("\n", false, 1)
-			script_identifier = split[0]
-	debug_log.append("%s %s %s %s" % [count, node, node.name, script_identifier])
-	for child in node.get_children():
-		if log_all_nodes or is_procedural_object(child):
-			count = _log_nodes(child, log_all_nodes, debug_log, count)
-	
-	return count
-
-
-static func _null_procedural_references_recursive(object: Object, nulled: Dictionary) -> void:
-	# Don't process circular references.
-	if nulled.has(object):
+	# Index all persist objects.
+	var id := object.get_instance_id()
+	if _debug_persist_register.has(id):
 		return
-	nulled[object] = true
+	_debug_persist_register[id] = weakref(object)
 	
-	# Recursive call to all nodes. All procedural nodes must be in the tree!
-	if object is Node:
-		var node: Node = object
-		for child in node.get_children():
-			if is_persist_object(child):
-				_null_procedural_references_recursive(child, nulled)
-	
-	# Null all procedural object references with recursive calls to RefCounteds
+	# Get all procedural object references from persist lists, recursive.
 	for properties_array_name in persist_property_lists:
 		if not properties_array_name in object:
 			continue
 		var properties_array: Array = object.get(properties_array_name)
 		for property: StringName in properties_array:
-			var value: Variant = object.get(property)
-			var type := typeof(value)
-			if type == TYPE_OBJECT:
-				var property_object: Object = value
-				_null_procedural_references_recursive(property_object, nulled)
-				object.set(property, null)
-			elif type == TYPE_ARRAY:
-				# test elements if Object-typed only
-				var array: Array = value
-				if array.get_typed_builtin() == TYPE_OBJECT:
-					for i in array.size():
-						var array_object: Object = array[i]
-						_null_procedural_references_recursive(array_object, nulled)
-						array[i] = null
-			elif type == TYPE_DICTIONARY:
-				# test all keys and values
-				var dict: Dictionary = value
-				for key: Variant in dict.keys():
-					var dict_value: Variant = dict[key]
-					if typeof(dict_value) == TYPE_OBJECT:
-						var value_object: Object = dict_value
-						_null_procedural_references_recursive(value_object, nulled)
-						dict[key] = null
-					if typeof(key) == TYPE_OBJECT:
-						var key_object: Object = key
-						_null_procedural_references_recursive(key_object, nulled)
-						dict.erase(key)
+			var variant: Variant = object.get(property)
+			_register_persist_variant_recursive(variant)
+	
+	# Check all persist nodes, recursive.
+	if object is Node:
+		var node: Node = object
+		assert(node.is_inside_tree(), "Reference to persist node that is not in the tree")
+		for child in node.get_children():
+			if is_persist_object(child):
+				_register_persist_object_recursive(child)
+
+
+static func _register_persist_variant_recursive(variant: Variant) -> void:
+	var type := typeof(variant)
+	if type == TYPE_OBJECT:
+		var object: Object = variant
+		_register_persist_object_recursive(object)
+	elif type == TYPE_ARRAY:
+		var array: Array = variant
+		_register_persist_array_recursive(array)
+	elif type == TYPE_DICTIONARY:
+		var dict: Dictionary = variant
+		_register_persist_dictionary_recursive(dict)
+
+
+static func _register_persist_array_recursive(array: Array) -> void:
+	var array_type := array.get_typed_builtin()
+	if array_type == TYPE_OBJECT:
+		for object: Object in array:
+			_register_persist_object_recursive(object)
+	elif array_type == TYPE_ARRAY:
+		for nested_array: Array in array:
+			_register_persist_array_recursive(nested_array)
+	elif array_type == TYPE_DICTIONARY:
+		for dict: Dictionary in array:
+			_register_persist_dictionary_recursive(dict)
+	elif array_type == TYPE_NIL:
+		for variant: Variant in array:
+			_register_persist_variant_recursive(variant)
+
+
+static func _register_persist_dictionary_recursive(dict: Dictionary) -> void:
+	const REGISTER_TYPES: Array[int] = [TYPE_OBJECT, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_NIL]
+	var key_type := dict.get_typed_key_builtin()
+	if REGISTER_TYPES.has(key_type):
+		var keys := Array(dict.keys(), key_type, &"", null)
+		_register_persist_array_recursive(keys)
+	var value_type := dict.get_typed_value_builtin()
+	if REGISTER_TYPES.has(value_type):
+		var values := Array(dict.values(), value_type, &"", null)
+		_register_persist_array_recursive(values)

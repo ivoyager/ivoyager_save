@@ -26,7 +26,7 @@ extends EditorPlugin
 const plugin_utils := preload("plugin_utils.gd")
 
 var _config: ConfigFile # base config with overrides
-var _autoloads := {}
+var _autoloads: Dictionary[String, String] = {}
 
 
 func _enter_tree() -> void:
@@ -47,11 +47,10 @@ func _add_autoloads() -> void:
 	for autoload_name in _config.get_section_keys("save_autoload"):
 		var value: Variant = _config.get_value("save_autoload", autoload_name)
 		if value: # could be null or "" to negate
-			assert(typeof(value) == TYPE_STRING,
-					"'%s' must specify a path as String" % autoload_name)
+			assert(typeof(value) == TYPE_STRING, "'%s' must specify a path as String" % autoload_name)
 			_autoloads[autoload_name] = value
-	for autoload_name: String in _autoloads:
-		var path: String = _autoloads[autoload_name]
+	for autoload_name in _autoloads:
+		var path := _autoloads[autoload_name]
 		add_autoload_singleton(autoload_name, path)
 
 
