@@ -6,7 +6,7 @@ File format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 See cloning and downloading instructions [here](https://www.ivoyager.dev/developers/).
 
-## [v0.0.3] - UNRELEASED
+## [v0.0.3] - 2025-06-12
 
 Developed using Godot 4.4.1.
 
@@ -40,5 +40,5 @@ Initial alpha release!
 
 This plugin replaces [ivoyager_tree_saver](https://github.com/ivoyager/ivoyager_tree_saver). It has that plugin's functionality plus save/load GUI classes taken out of [ivoyager_core](https://github.com/ivoyager/ivoyager_core).
 
-[v0.0.3]: https://github.com/ivoyager/ivoyager_save/compare/v0.0.2...HEAD
+[v0.0.3]: https://github.com/ivoyager/ivoyager_save/compare/v0.0.2...v0.0.3
 [v0.0.2]: https://github.com/ivoyager/ivoyager_save/compare/v0.0.1...v0.0.2
