@@ -39,7 +39,14 @@ func _open() -> void:
 	if last_modified:
 		print("IVLoadDialog: last_modified= ", last_modified)
 		current_path = last_modified # this might set current_dir to the autosave dir!
-	deselect_all()
+		
+		# Hack fix needed in Godot 4.5.betaX. OK button is disabled after path
+		# set by code even if valid file...
+		var ok_button := get_ok_button()
+		ok_button.disabled = false
+		
+	else:
+		deselect_all()
 
 
 func _on_file_selected(path: String) -> void:
