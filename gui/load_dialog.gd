@@ -23,6 +23,10 @@ extends FileDialog
 
 
 func _ready() -> void:
+	IVSave.save_configured.connect(_configure)
+
+
+func _configure() -> void:
 	add_filter("*." + IVSave.file_extension, IVSave.file_description)
 	IVSave.load_dialog_requested.connect(_open)
 	IVSave.close_dialogs_requested.connect(hide)
