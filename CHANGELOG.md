@@ -11,9 +11,13 @@ See cloning and downloading instructions [here](https://www.ivoyager.dev/develop
 
 Now release candidate for I, Voyager "beta"!
 
-Under development using Godot 4.5.
+Under development using Godot 4.5.1.
+
+Breaks older savegame files!
 
 ### Fixed
+* Procedural nodes are moved to their correct sibling index on load.
+* Works now if dialogs are already in tree (rather than procedurally added).
 * Some GUI issues from Godot 4.5 update.
 
 

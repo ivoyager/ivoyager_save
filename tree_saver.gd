@@ -299,8 +299,11 @@ func _build_procedural_tree() -> void:
 		var node: Node = _objects[object_id]
 		if node[&"PERSIST_MODE"] == PERSIST_PROCEDURAL:
 			var parent_id: int = serialized_node[2]
+			var sibling_index: int = serialized_node[3]
 			var parent: Node = _objects[parent_id]
+			sibling_index = mini(sibling_index, parent.get_child_count())
 			parent.add_child(node)
+			parent.move_child(node, sibling_index)
 
 
 # Serialize/deserialize functions
@@ -320,15 +323,19 @@ func _serialize_node(node: Node) -> void:
 		assert(!DPRINT or _dprint(object_id, node, node.name))
 	serialized_node.append(script_id) # index 1
 	# index 2 will be node path or parent_id or -1
+	# index 3 will be child index or -1
 	if !is_procedural: # "properties-only"
 		var node_path := _nonprocedural_path_root.get_path_to(node)
 		serialized_node.append(node_path) # index 2
+		serialized_node.append(node.get_index()) # index 3
 	elif object_id > 0: # procedural with parent in the tree
 		var parent := node.get_parent()
 		var parent_id: int = _object_ids[parent]
 		serialized_node.append(parent_id) # index 2
+		serialized_node.append(node.get_index()) # index 3
 	else: # detatched procedural root node
 		serialized_node.append(-1) # index 2
+		serialized_node.append(-1) # index 3
 	_serialize_object_data(node, serialized_node)
 	_gamesave_serialized_nodes.append(serialized_node)
 
@@ -363,7 +370,7 @@ func _get_script_id(script: Script) -> int:
 
 func _serialize_object_data(object: Object, serialized_object: Array) -> void:
 	assert(object is Node or object is RefCounted)
-	# serialized_object already has 3 elements (if Node) or 2 (if RefCounted).
+	# serialized_object already has 4 elements (if Node) or 2 (if RefCounted).
 	# We now append the size of each persist array followed by data.
 	for properties_array in _persist_property_lists:
 		var properties: Array[StringName]
@@ -383,7 +390,7 @@ func _serialize_object_data(object: Object, serialized_object: Array) -> void:
 func _deserialize_object_data(serialized_object: Array, is_node: bool) -> void:
 	# The order of persist properties must be exactly the same from game save to
 	# game load. However, it's ok if a version-updated class has a longer list.
-	var index: int = 3 if is_node else 2
+	var index := 4 if is_node else 2
 	var object_id: int = serialized_object[0]
 	var object: Object = _objects[object_id]
 	for properties_array in _persist_property_lists:
