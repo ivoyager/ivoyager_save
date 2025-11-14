@@ -22,6 +22,10 @@ extends Button
 
 
 func _ready() -> void:
+	IVSave.save_configured.connect(_configure)
+
+
+func _configure() -> void:
 	visibility_changed.connect(_on_visibility_changed)
 	_on_visibility_changed()
 

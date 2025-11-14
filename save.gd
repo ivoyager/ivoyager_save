@@ -54,6 +54,7 @@ signal dialog_closed(control: Control) # emitted by the dialog
 signal save_dialog_requested()
 signal load_dialog_requested()
 signal close_dialogs_requested()
+signal save_configured()
 
 
 enum SaveType {
@@ -148,19 +149,18 @@ var load_checkpoint := func() -> bool: return true
 ## destroyed.
 var load_build_delay := 5
 
-var input_enabled := false: get = get_input_enabled, set = set_input_enabled
-var input_shortcut_save_as := &"save_as"
-var input_shortcut_quicksave := &"quicksave"
-var input_shortcut_load_file := &"load_file"
-var input_shortcut_quickload := &"quickload"
 
 var _directory: String # globalized path
+var _is_configured := false
 
 
 @onready var _tree_saver := IVTreeSaver.new()
 
 
-func _ready() -> void:
+
+## Configures the plugin from this node's properties. The plugin won't do
+## anything until this method is called. 
+func configure_save_plugin() -> void:
 	# Make sure we have a directory and a place to cache user directory change.
 	var dir_cache := FileAccess.open(directory_cache_path, FileAccess.READ)
 	if !dir_cache:
@@ -174,32 +174,12 @@ func _ready() -> void:
 		DirAccess.make_dir_recursive_absolute(_directory)
 	timeout.connect(autosave)
 	ignore_time_scale = true
-	set_process_shortcut_input(input_enabled)
+	_is_configured = true
+	save_configured.emit()
 
 
-func _shortcut_input(event: InputEvent) -> void:
-	if !event.is_action_type() or !event.is_pressed():
-		return
-	if event.is_action_pressed(input_shortcut_quicksave):
-		quicksave()
-	elif event.is_action_pressed(input_shortcut_save_as):
-		save_file()
-	elif event.is_action_pressed(input_shortcut_quickload):
-		quickload()
-	elif event.is_action_pressed(input_shortcut_load_file):
-		load_file()
-	else:
-		return
-	get_viewport().set_input_as_handled()
-
-
-func get_input_enabled() -> bool:
-	return input_enabled
-
-
-func set_input_enabled(is_enabled: bool) -> void:
-	set_process_shortcut_input(is_enabled)
-	input_enabled = is_enabled
+func push_configure_warning() -> void:
+	push_warning("The Save plugin won't do anything until configure_save_plugin() is called")
 
 
 func get_file_name(save_type := SaveType.NAMED_SAVE) -> String:
@@ -247,23 +227,35 @@ func set_directory(dir_path: String) -> void:
 
 ## Path is constructed according to "quicksave_" properties.
 func quicksave() -> void:
+	if !_is_configured:
+		push_configure_warning()
+		return
 	save_file(SaveType.QUICKSAVE)
 
 
 ## Path is constructed according to "autosave_" properties.
 func autosave() -> void:
+	if !_is_configured:
+		push_configure_warning()
+		return
 	save_file(SaveType.AUTOSAVE)
 
 
 ## Load the last modified file at the cached directory (or its subdirectories),
 ## or request load dialog if there are none.
 func quickload() -> void:
+	if !_is_configured:
+		push_configure_warning()
+		return
 	load_file(true)
 
 
 ## Call with [param minutes] > 0.0 to start the autosave timer, or 0.0 to stop.
 ## To manage autosaves by external code, call [method autosave] as needed.
 func start_autosave_timer(minutes: float) -> void:
+	if !_is_configured:
+		push_configure_warning()
+		return
 	var seconds := maxf(minutes * 60, 0.0)
 	if seconds == 0.0:
 		stop()
@@ -274,6 +266,9 @@ func start_autosave_timer(minutes: float) -> void:
 ## Use default args to request save dialog. [param path] is used only if
 ## [code]save_type == SaveType.NAMED_SAVE[/code].
 func save_file(save_type := SaveType.NAMED_SAVE, path := "") -> void:
+	if !_is_configured:
+		push_configure_warning()
+		return
 	if is_loading or !save_permit.call():
 		return
 	if save_type != SaveType.NAMED_SAVE:
@@ -307,6 +302,9 @@ func save_file(save_type := SaveType.NAMED_SAVE, path := "") -> void:
 ## Use default args to request load dialog. If [code]load_last == true[/code],
 ## then [param path] will be ignored.
 func load_file(load_last := false, path := "") -> void:
+	if !_is_configured:
+		push_configure_warning()
+		return
 	if is_saving or !load_permit.call():
 		return
 	if load_last:
