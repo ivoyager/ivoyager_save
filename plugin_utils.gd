@@ -25,7 +25,7 @@ extends Object
 ## WIP file to be used as new plugin_utils.gd "master".[br][br]
 ##
 ## The "master" plugin_utils.gd file is maintained at:
-## [url]https://github.com/ivoyager/ivoyager_core/blob/master/editor_plugin/plugin_utils.gd[/url].
+## [url]https://github.com/ivoyager/ivoyager_core/blob/master/editor/plugin_utils.gd[/url].
 ## The file is copied in I, Voyager plugins so they can be free-standing.[br][br]
 ##
 ## Most functions are safe to call in-editor from EditorPlugin or at runtime by
