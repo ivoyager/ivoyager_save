@@ -21,7 +21,7 @@
 extends EditorPlugin
 
 # Adds autoload singleton(s) as specified by config files
-# 'res://addons/ivoyager_save/save.cfg' and 'res://ivoyager_override.cfg'.
+# res://addons/ivoyager_save/ivoyager_save.cfg and res://ivoyager_override.cfg.
 
 const plugin_utils := preload("plugin_utils.gd")
 
@@ -31,7 +31,7 @@ var _autoloads: Dictionary[String, String] = {}
 
 func _enter_tree() -> void:
 	plugin_utils.print_plugin_name_and_version("ivoyager_save"," - https://ivoyager.dev")
-	_config = plugin_utils.get_ivoyager_config("res://addons/ivoyager_save/save.cfg")
+	_config = plugin_utils.get_ivoyager_config("res://addons/ivoyager_save/ivoyager_save.cfg")
 	if !_config:
 		return
 	_add_autoloads()
