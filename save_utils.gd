@@ -304,7 +304,8 @@ static func _register_persist_array_recursive(array: Array) -> void:
 	var array_type := array.get_typed_builtin()
 	if array_type == TYPE_OBJECT:
 		for object: Object in array:
-			_register_persist_object_recursive(object)
+			if object: # skip nulls in object-typed array
+				_register_persist_object_recursive(object)
 	elif array_type == TYPE_ARRAY:
 		for nested_array: Array in array:
 			_register_persist_array_recursive(nested_array)

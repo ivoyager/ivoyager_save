@@ -456,10 +456,10 @@ func _get_decoded_value(encoded_value: Variant) -> Variant:
 
 func _get_encoded_array(array: Array) -> Array:
 	
-	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
+	const DONT_DUPLICATE: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
 	
 	var array_type := array.get_typed_builtin()
-	if !UNSAFE_TYPES.has(array_type):
+	if !DONT_DUPLICATE.has(array_type):
 		assert(!PROHIBITED_TYPES.has(array_type), "Can't persist type %s" % array_type)
 		return array.duplicate() # duplicates array type!
 	
@@ -511,12 +511,12 @@ func _get_decoded_array(encoded_array: Array) -> Array:
 
 func _get_encoded_dict(dict: Dictionary) -> Dictionary:
 	 
-	const UNSAFE_TYPES: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
+	const DONT_DUPLICATE: Array[int] = [TYPE_NIL, TYPE_ARRAY, TYPE_DICTIONARY, TYPE_OBJECT]
 	const TYPE_KEY := "" # not a possible return of _get_encoded_value()
 	
 	var key_type := dict.get_typed_key_builtin()
 	var value_type := dict.get_typed_value_builtin()
-	if !UNSAFE_TYPES.has(key_type) and !UNSAFE_TYPES.has(value_type):
+	if !DONT_DUPLICATE.has(key_type) and !DONT_DUPLICATE.has(value_type):
 		assert(!PROHIBITED_TYPES.has(key_type), "Can't persist type %s" % key_type)
 		assert(!PROHIBITED_TYPES.has(value_type), "Can't persist type %s" % value_type)
 		return dict.duplicate() # duplicates dict type!
