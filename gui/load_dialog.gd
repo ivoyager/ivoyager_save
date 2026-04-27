@@ -20,6 +20,9 @@
 class_name IVLoadDialog
 extends FileDialog
 
+## File dialog that selects a save file to load when [signal IVSave.load_dialog_requested]
+## is emitted.
+
 
 
 func _ready() -> void:

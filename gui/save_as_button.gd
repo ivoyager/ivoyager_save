@@ -20,6 +20,8 @@
 class_name IVSaveAsButton
 extends Button
 
+## Button widget that opens the save dialog via [method IVSave.save_file].
+
 
 
 func _pressed() -> void:

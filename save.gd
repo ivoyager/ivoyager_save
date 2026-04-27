@@ -42,21 +42,37 @@ extends Timer
 ## See [IVTreeSaver] for detailed comments on how to specify "persist"
 ## objects and properites in your project.
 
+## Emitted when a save begins.
 signal save_started()
+## Emitted when a save completes.
 signal save_finished()
+## Emitted when a load begins.
 signal load_started()
+## Emitted before existing procedural nodes are freed during load.
 signal about_to_free_procedural_nodes()
+## Emitted just before the procedural tree is rebuilt during load.
 signal about_to_build_procedural_tree_for_load()
+## Emitted when a load completes.
 signal load_finished()
+## Emitted whenever [member is_saving] or [member is_loading] changes.
 signal status_changed(is_saving: bool, is_loading: bool)
-signal dialog_opened(control: Control) # emitted by the dialog
-signal dialog_closed(control: Control) # emitted by the dialog
+## Emitted by the dialog when it becomes visible.
+signal dialog_opened(control: Control)
+## Emitted by the dialog when it becomes hidden.
+signal dialog_closed(control: Control)
+## Emitted by [method save_file] when no [param path] is supplied; the project
+## should respond by showing its save dialog.
 signal save_dialog_requested()
+## Emitted by [method load_file] when no [param path] is supplied; the project
+## should respond by showing its load dialog.
 signal load_dialog_requested()
+## Emitted by [method close_dialogs] so the save/load dialogs can hide themselves.
 signal close_dialogs_requested()
+## Emitted at the end of [method configure_save_plugin].
 signal save_configured()
 
 
+## Identifies a save invocation as a named save (via dialog), quicksave, or autosave.
 enum SaveType {
 	NAMED_SAVE,
 	QUICKSAVE,
@@ -106,20 +122,27 @@ var save_root: Node = null
 var directory: String: get = get_directory, set = set_directory
 ## Cache path to persist the current save directory.
 var directory_cache_path := "user://cache/saves_dir.ivbinary"
+## Used when no cached directory is available; created if it doesn't exist.
 var fallback_directory := "user://saves"
+## Subdirectory of [member directory] used for autosaves.
 var autosave_subdirectory := "autosaves"
+## Base name for autosave files.
 var autosave_name := "Autosave"
+## Maximum number of autosave files retained; older files are trimmed past this.
 var autosave_number := 10
 ## By default, autosaves will be named [member autosave_name] appended by an
 ## an integer from 1 to [member autosave_number]. Set this value to true to
 ## invoke callable [member suffix_generator] and set a different suffix.
-var autosave_uses_suffix_generator := false 
+var autosave_uses_suffix_generator := false
+## Base name for quicksave files.
 var quicksave_name := "Quicksave"
 ## By default, the single quicksave file will be named [member quicksave_name]
 ## and will be overwritten. Set this value to true to invoke callable [member suffix_generator]
 ## to generate multiple named quicksaves.
 var quicksave_uses_suffix_generator := false
+## File extension applied to all save files (without the leading dot).
 var file_extension := "GameSave"
+## Human-readable file description shown in save/load dialog filters.
 var file_description := "Game Save"
 
 
@@ -178,10 +201,15 @@ func configure_save_plugin() -> void:
 	save_configured.emit()
 
 
+## Pushes a warning that the plugin has not been configured yet.
 func push_configure_warning() -> void:
 	push_warning("The Save plugin won't do anything until configure_save_plugin() is called")
 
 
+## Returns the save file name (with extension) for the given [param save_type],
+## using [member name_generator], [member quicksave_name] or [member autosave_name]
+## as the base name and appending [member suffix_generator] or an autosave
+## integer per the relevant configuration flags.
 func get_file_name(save_type := SaveType.NAMED_SAVE) -> String:
 	var base_name: String
 	match save_type:
@@ -200,12 +228,16 @@ func get_file_name(save_type := SaveType.NAMED_SAVE) -> String:
 	return base_name + "." + file_extension
 
 
+## Returns the full save file path for the given [param save_type], joining
+## [method get_file_name] with the autosave subdirectory or the current
+## save directory as appropriate.
 func get_file_path(save_type := SaveType.NAMED_SAVE) -> String:
 	if save_type == SaveType.AUTOSAVE:
 		return get_autosaves_subdirectory().path_join(get_file_name(save_type))
 	return get_directory().path_join(get_file_name(save_type))
 
 
+## Returns the full path to the autosaves subdirectory under [member directory].
 func get_autosaves_subdirectory() -> String:
 	return get_directory().path_join(autosave_subdirectory)
 
@@ -214,6 +246,8 @@ func get_directory() -> String:
 	return _directory
 
 
+## Sets the current save [param dir_path] and writes it to
+## [member directory_cache_path] so it persists across sessions.
 func set_directory(dir_path: String) -> void:
 	if dir_path == _directory:
 		return
@@ -342,6 +376,8 @@ func load_file(load_last := false, path := "") -> void:
 	status_changed.emit(false, false)
 
 
+## Returns true if [param path] (or any of its subdirectories) contains at
+## least one file with extension [member file_extension].
 func has_file(path: String) -> bool:
 	var dir := DirAccess.open(path)
 	if !dir:
@@ -359,6 +395,7 @@ func has_file(path: String) -> bool:
 	return false
 
 
+## Emits [signal close_dialogs_requested] so the save and load dialogs hide.
 func close_dialogs() -> void:
 	close_dialogs_requested.emit()
 
@@ -370,6 +407,9 @@ func get_last_modified_file_path(dir_path: String) -> String:
 	return path_time_result[0]
 
 
+## Returns the next integer suffix for autosave files in the form
+## "[code]-N[/code]", incrementing from the last modified autosave and wrapping
+## back to 1 once [member autosave_number] is reached.
 func get_autosave_integer_append() -> String:
 	# Only examines the last modified file to decide the next integer append.
 	var last_path_time := ["", 0]
@@ -388,6 +428,8 @@ func get_autosave_integer_append() -> String:
 	return "-" + str(integer)
 
 
+## Removes the oldest autosave files until at most [member autosave_number]
+## remain in the autosaves subdirectory.
 func trim_autosaves_subdirectory() -> void:
 	var list := _get_path_modified_time_list(get_autosaves_subdirectory())
 	if list.size() <= autosave_number:

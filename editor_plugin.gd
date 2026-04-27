@@ -20,8 +20,11 @@
 @tool
 extends EditorPlugin
 
-# Adds autoload singleton(s) as specified by config files
-# res://addons/ivoyager_save/ivoyager_save.cfg and res://ivoyager_override.cfg.
+## Editor plugin entry point for ivoyager_save.
+##
+## Adds autoload singleton(s) as specified by config files
+## [code]res://addons/ivoyager_save/ivoyager_save.cfg[/code] and
+## [code]res://ivoyager_override.cfg[/code].
 
 const plugin_utils := preload("plugin_utils.gd")
 

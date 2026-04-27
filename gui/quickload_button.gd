@@ -20,6 +20,10 @@
 class_name IVQuickloadButton
 extends Button
 
+## Button widget that loads the most recently modified save file via
+## [method IVSave.quickload]. Disabled when no save file exists in
+## [member IVSave.directory].
+
 
 func _ready() -> void:
 	IVSave.save_configured.connect(_configure)

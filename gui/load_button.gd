@@ -20,6 +20,8 @@
 class_name IVLoadButton
 extends Button
 
+## Button widget that opens the load dialog via [method IVSave.load_file].
+
 
 
 func _pressed() -> void:
