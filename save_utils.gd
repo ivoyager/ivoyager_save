@@ -227,6 +227,10 @@ static func debug_register_persist_objects(root: Node, print_now := false) -> bo
 	return true
 
 
+## Prints all persist objects registered by [method debug_register_persist_objects].
+## Pass [param procedural_only] = true to skip "properties-only" entries.
+## Always returns true so it can be wrapped in [code]assert()[/code] for
+## editor/debug-only execution.
 static func debug_print_persist_register(procedural_only := false) -> bool:
 	for id in _debug_persist_register:
 		var object: Object = _debug_persist_register[id].get_ref()

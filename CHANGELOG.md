@@ -8,7 +8,10 @@ See cloning and downloading instructions [here](https://www.ivoyager.dev/develop
 
 ## [v0.1.2] - UNRELEASED
 
-Under development using Godot 4.6.1.
+Under development using Godot 4.6.2.
+
+### Changed
+* Completed doc comments in all files.
 
 ### Fixed
 * Allow nulls in object-typed arrays.

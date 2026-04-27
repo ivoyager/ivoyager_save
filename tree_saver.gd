@@ -102,6 +102,7 @@ extends RefCounted
 
 const DPRINT := false # set true for debug print
 
+## Variant types that cannot be persisted in a save file.
 const PROHIBITED_TYPES: Array[int] = [TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]
 
 

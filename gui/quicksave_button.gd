@@ -20,6 +20,8 @@
 class_name IVQuicksaveButton
 extends Button
 
+## Button widget that triggers a quicksave via [method IVSave.quicksave].
+
 
 
 func _pressed() -> void:

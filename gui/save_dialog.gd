@@ -20,6 +20,9 @@
 class_name IVSaveDialog
 extends FileDialog
 
+## File dialog that selects a save file path when [signal IVSave.save_dialog_requested]
+## is emitted.
+
 
 
 func _ready() -> void:
